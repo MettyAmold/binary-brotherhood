@@ -58,6 +58,13 @@ Die APK heißt `BinaryBrotherhood-<Version>.apk` und liegt unter *Releases*. Auf
 „Installation aus unbekannten Quellen“ erlauben, fertig. Updates installieren sich über die alte Version,
 weil alle Builds mit demselben Schlüssel signiert sind.
 
+**In-App-Update:** Das Pfeil-Symbol oben rechts in der App prüft die GitHub-Releases, lädt die neueste APK
+und startet den Installer (beim ersten Mal fragt Android nach der Erlaubnis „Unbekannte Apps installieren“).
+Beim App-Start wird still geprüft; gibt es etwas Neues, bekommt das Symbol einen roten Punkt. Verglichen wird
+über die Build-Nummer, die der Workflow als unsichtbaren Marker in die Release-Notes schreibt. Wer einen
+Dev-Build (Versionsname mit `-dev`) installiert hat, bekommt auch das Rolling-Release „latest“ angeboten,
+alle anderen nur reguläre Releases.
+
 Signatur: Der Workflow erwartet die Repository-Secrets `BBL_KEYSTORE_BASE64`, `BBL_KEYSTORE_PASSWORD`,
 `BBL_KEY_ALIAS` und `BBL_KEY_PASSWORD`. Fehlen sie, wird mit dem Debug-Key signiert. Lokal signiert
 `./gradlew :app:assembleRelease`, wenn `BBL_KEYSTORE_PATH` und die Passwort-Variablen gesetzt sind.

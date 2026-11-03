@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -62,9 +63,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import at.binarybrotherhood.app.R
 import at.binarybrotherhood.app.server.LanServer
 import at.binarybrotherhood.app.server.ServerService
+import at.binarybrotherhood.app.update.UpdateManager
+import at.binarybrotherhood.app.update.UpdateState
 import at.binarybrotherhood.app.util.NetUtils
 
 /**
@@ -76,6 +80,7 @@ class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<ServerService?>(null)
     private var bound = false
     private var webView: WebView? = null
+    private lateinit var updateManager: UpdateManager
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -99,10 +104,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        updateManager = UpdateManager(applicationContext, lifecycleScope)
+        updateManager.check() // beim Start still prüfen; bei neuer Version leuchtet das Update-Symbol
         setContent {
             BinaryBrotherhoodTheme {
                 HostScreen(
                     service = service,
+                    updateManager = updateManager,
                     onToggleServer = { s -> if (s.running.value) s.stopServer() else s.startServer() },
                     onReload = { webView?.reload() },
                     onShare = { shareAddress() },
@@ -117,6 +125,11 @@ class MainActivity : ComponentActivity() {
         } else {
             startAndBind()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateManager.onResume(this)
     }
 
     private fun startAndBind() {
@@ -179,6 +192,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun HostScreen(
     service: ServerService?,
+    updateManager: UpdateManager,
     onToggleServer: (ServerService) -> Unit,
     onReload: () -> Unit,
     onShare: () -> Unit,
@@ -187,6 +201,8 @@ private fun HostScreen(
     val running by (service?.running ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsStateWithLifecycle()
     val clients by (service?.server?.clientCount ?: remember { kotlinx.coroutines.flow.MutableStateFlow(0) }).collectAsStateWithLifecycle()
     var showHost by remember { mutableStateOf(false) }
+    var showUpdate by remember { mutableStateOf(false) }
+    val updateState by updateManager.state.collectAsStateWithLifecycle()
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     BackHandler(enabled = showHost || (webViewRef?.canGoBack() == true)) {
@@ -195,7 +211,18 @@ private fun HostScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-            TopBar(running = running, clients = clients, onHost = { showHost = !showHost }, onReload = onReload)
+            TopBar(
+                running = running,
+                clients = clients,
+                updateAvailable = updateState is UpdateState.Available || updateState is UpdateState.ReadyToInstall,
+                onHost = { showHost = !showHost },
+                onReload = onReload,
+                onUpdate = {
+                    val s = updateManager.state.value
+                    if (s is UpdateState.Idle || s is UpdateState.UpToDate || s is UpdateState.Error) { updateManager.reset(); updateManager.check() }
+                    showUpdate = true
+                },
+            )
             Box(modifier = Modifier.fillMaxSize()) {
                 if (running) {
                     AndroidView(
@@ -208,13 +235,16 @@ private fun HostScreen(
                 if (showHost && service != null) {
                     HostPanel(service = service, running = running, clients = clients, onToggleServer = { onToggleServer(service) }, onShare = onShare, onClose = { showHost = false })
                 }
+                if (showUpdate) {
+                    UpdateDialog(manager = updateManager, onClose = { showUpdate = false })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TopBar(running: Boolean, clients: Int, onHost: () -> Unit, onReload: () -> Unit) {
+private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onHost: () -> Unit, onReload: () -> Unit, onUpdate: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -229,6 +259,21 @@ private fun TopBar(running: Boolean, clients: Int, onHost: () -> Unit, onReload:
             Text(if (running) "● $clients online" else "○ gestoppt", fontSize = 12.sp, color = if (running) Color(0xFF6BBF59) else Color(0xFFE05C5C))
         }
         IconButton(onClick = onReload) { Icon(Icons.Default.Refresh, contentDescription = "Neu laden", tint = Muted) }
+        IconButton(onClick = onUpdate) {
+            Box {
+                Icon(painterResource(R.drawable.ic_update), contentDescription = "App-Update", tint = if (updateAvailable) Gold else Muted)
+                if (updateAvailable) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 3.dp, y = (-3).dp)
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE05C5C)),
+                    )
+                }
+            }
+        }
         IconButton(onClick = onHost) { Icon(Icons.Default.Share, contentDescription = "Host-Info", tint = Gold) }
     }
 }
