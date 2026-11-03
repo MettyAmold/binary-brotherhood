@@ -2,6 +2,10 @@
 import { Db, now, bool } from "./db";
 import { XP, xpAmount, xpLabel, levelForXp, summarizeCosts, ExpenseInput, normalizeUnc, isGameFolder, gameKey, displayName, BadRequest, NotFound, Forbidden } from "./logic";
 
+/** D1 liefert BLOBs je nach Laufzeit als ArrayBuffer oder als Zahlenliste – beides zu Bytes machen. */
+export const toBytes = (v: ArrayBuffer | ArrayBufferView | number[]): Uint8Array =>
+  v instanceof ArrayBuffer ? new Uint8Array(v) : ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v);
+
 const PALETTE = ["#C9A24D", "#D96C4F", "#4FA3D9", "#6BBF59", "#B05ED9", "#E0B04C", "#48C9B0", "#E05C8A", "#8E9BFF", "#F08A24", "#5DD39E", "#D64545"];
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 const groupBy = <T, K>(list: T[], key: (t: T) => K): Map<K, T[]> => { const m = new Map<K, T[]>(); for (const t of list) { const k = key(t); (m.get(k) ?? m.set(k, []).get(k)!).push(t); } return m; };
@@ -145,9 +149,9 @@ export class Repo {
     if (!(await this.db.first("SELECT id FROM members WHERE id = ?", id))) throw new NotFound("Mitglied nicht gefunden");
     await this.db.run("UPDATE members SET avatar = ?, hasAvatar = 1, avatarUpdatedAt = ? WHERE id = ?", bytes, now(), id);
   }
-  async avatar(id: number): Promise<ArrayBuffer | null> {
-    const r = await this.db.first<{ avatar: ArrayBuffer | null }>("SELECT avatar FROM members WHERE id = ?", id);
-    return r?.avatar ?? null;
+  async avatar(id: number): Promise<Uint8Array | null> {
+    const r = await this.db.first<{ avatar: ArrayBuffer | number[] | null }>("SELECT avatar FROM members WHERE id = ?", id);
+    return r?.avatar ? toBytes(r.avatar) : null;
   }
   async xpLog(memberId: number) {
     return (await this.db.all<{ type: string; amount: number; createdAt: number }>("SELECT type, amount, createdAt FROM xp_log WHERE memberId = ? ORDER BY createdAt DESC", memberId))

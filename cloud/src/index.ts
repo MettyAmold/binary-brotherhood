@@ -1,7 +1,7 @@
 // Einstieg des Workers: Routing der REST-API (gleiche Pfade wie die Android-App), Login-Pflicht,
 // Live-Updates über das Hub-Durable-Object, Steam-Proxy, Admin-Funktionen, Export/Import.
 import { Db, Env } from "./db";
-import { Repo } from "./repo";
+import { Repo, toBytes } from "./repo";
 import { resolveSession, issueToken, login, changePassword, resetPassword, validatePassword, hashPassword, randomCode, Session } from "./auth";
 import { steamSearch, steamDetails, steamAppIdFromUrl } from "./steam";
 import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound } from "./logic";
@@ -92,7 +92,7 @@ get("/api/members/{id}/xp", async c => c.repo.xpLog(id(c)));
 get("/api/members/{id}/avatar", async c => {
   const data = await c.repo.avatar(id(c));
   if (!data) return Response.redirect(new URL("/img/avatar-default.svg", c.url).toString(), 302);
-  return new Response(data, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" } });
+  return new Response(data as unknown as BodyInit, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" } });
 });
 post("/api/members/{id}/avatar", async c => {
   requireSelfOrAdmin(c, id(c));
@@ -204,8 +204,8 @@ async function exportAll(c: Ctx): Promise<ExportData> {
     tables[t] = rows;
   }
   const avatars: Record<string, string> = {};
-  for (const m of await c.db.all<{ id: number; avatar: ArrayBuffer | null }>("SELECT id, avatar FROM members WHERE avatar IS NOT NULL")) {
-    if (m.avatar) avatars[String(m.id)] = btoa(String.fromCharCode(...new Uint8Array(m.avatar)));
+  for (const m of await c.db.all<{ id: number; avatar: ArrayBuffer | number[] | null }>("SELECT id, avatar FROM members WHERE avatar IS NOT NULL")) {
+    if (m.avatar) { const b = toBytes(m.avatar); let s = ""; for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192)); avatars[String(m.id)] = btoa(s); }
   }
   return { format: "binary-brotherhood/1", exportedAt: Date.now(), tables, avatars };
 }
