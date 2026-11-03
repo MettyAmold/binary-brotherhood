@@ -26,6 +26,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -191,6 +194,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HostScreen(
     service: ServerService?,
@@ -213,8 +217,10 @@ private fun HostScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // imePadding: bei offener Tastatur schrumpft der WebView, sonst verdeckt sie die unten verankerten Dialoge
+        val imeVisible = WindowInsets.isImeVisible
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-            TopBar(
+            // Bei offener Tastatur die Leiste ausblenden, damit Dialoge im WebView mehr Höhe bekommen
+            if (!imeVisible) TopBar(
                 running = running,
                 clients = clients,
                 updateAvailable = updateState is UpdateState.Available || updateState is UpdateState.ReadyToInstall,

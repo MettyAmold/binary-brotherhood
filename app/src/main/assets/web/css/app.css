@@ -208,8 +208,9 @@ p { margin: 0 0 .6em; }
 .modal-head h3 { flex: 1; font-family: var(--display); color: var(--gold); letter-spacing: .05em; font-size: 16px; }
 .modal-body { padding: 16px; overflow-y: auto; }
 .modal-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
-/* Handy: Dialog füllt den ganzen sichtbaren Bereich (auch bei offener Tastatur), nur der Body scrollt */
-@media (max-width: 639px) {
+/* Handy oder niedriger Bereich (Tastatur offen, auch am Tablet): Dialog füllt alles, nur der Body scrollt */
+@media (max-width: 639px), (max-height: 700px) {
+  .modal-back { align-items: stretch; padding: 0; }
   .modal { height: 100%; max-height: 100%; border-radius: 0; border-left: 0; border-right: 0; max-width: none; }
   .modal-head { padding: 10px 14px; }
   .modal-body { padding: 12px 14px; flex: 1 1 auto; }
