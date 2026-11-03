@@ -431,12 +431,18 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         route("/steam") {
             get("/search") {
                 val q = call.request.queryParameters["q"] ?: ""
-                val result = runCatching { steam.search(q) }.getOrElse { throw BadRequestException("Steam nicht erreichbar (Host-Handy braucht Internet)") }
+                val result = runCatching { steam.search(q) }.getOrElse {
+                    Log.w(TAG, "Steam-Suche fehlgeschlagen", it)
+                    throw BadRequestException("Steam nicht erreichbar (Host-Handy braucht Internet): ${it.message ?: it.javaClass.simpleName}")
+                }
                 call.respond(result)
             }
             get("/app/{id}") {
                 val id = call.id()
-                val d = runCatching { steam.details(id) }.getOrElse { throw BadRequestException("Steam nicht erreichbar (Host-Handy braucht Internet)") }
+                val d = runCatching { steam.details(id) }.getOrElse {
+                    Log.w(TAG, "Steam-Details fehlgeschlagen", it)
+                    throw BadRequestException("Steam nicht erreichbar (Host-Handy braucht Internet): ${it.message ?: it.javaClass.simpleName}")
+                }
                 d?.let { call.respond(it) } ?: call.respond(HttpStatusCode.NotFound, ErrorDto("Steam-App nicht gefunden"))
             }
             get("/parse") {

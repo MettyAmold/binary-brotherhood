@@ -1,7 +1,8 @@
 package at.binarybrotherhood.app.server
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -16,8 +17,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * ohne Internet bleibt die manuelle Eingabe möglich.
  */
 class SteamClient {
-    private val client = HttpClient(CIO) {
-        engine { requestTimeout = 10_000 }
+    private val client = HttpClient(OkHttp) {
+        install(HttpTimeout) { connectTimeoutMillis = 8_000; requestTimeoutMillis = 15_000 }
     }
     private val json = Json { ignoreUnknownKeys = true }
 

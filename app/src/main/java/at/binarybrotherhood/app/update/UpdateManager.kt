@@ -8,7 +8,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import at.binarybrotherhood.app.BuildConfig
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -73,8 +73,7 @@ class UpdateManager(private val context: Context, private val scope: CoroutineSc
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
-    private val client = HttpClient(CIO) {
-        engine { requestTimeout = 0 }
+    private val client = HttpClient(OkHttp) {
         install(HttpTimeout) {
             connectTimeoutMillis = 15_000
             requestTimeoutMillis = 10 * 60_000
