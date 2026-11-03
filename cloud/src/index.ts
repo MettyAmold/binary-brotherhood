@@ -22,10 +22,18 @@ function realmSlug(req: Request, url: URL): string {
   return (req.headers.get("X-Realm") || url.searchParams.get("realm") || (fromCookie && decodeURIComponent(fromCookie)) || DEFAULT_REALM).toLowerCase();
 }
 
+/** Realm-Verzeichnis anlegen, falls die D1-Migration (0005) noch nicht gelaufen ist – idempotent, einmal je Isolate. */
+let registryReady: Promise<unknown> | null = null;
+const ensureRegistry = (env: Env) => (registryReady ??= env.DB.batch([
+  env.DB.prepare("CREATE TABLE IF NOT EXISTS realms (slug TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'lan', createdAt INTEGER NOT NULL, legacy INTEGER NOT NULL DEFAULT 0)"),
+  env.DB.prepare("INSERT OR IGNORE INTO realms (slug, name, kind, createdAt, legacy) VALUES (?, 'BINARY BROTHERHOOD', 'lan', 0, 1)").bind(DEFAULT_REALM),
+]).catch(e => { registryReady = null; throw e; }));
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname !== "/ws" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+    await ensureRegistry(env);
 
     // ---- Realm-Verzeichnis (ohne Login)
     if (url.pathname === "/api/realms" && req.method === "GET") {
