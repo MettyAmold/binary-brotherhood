@@ -69,6 +69,14 @@ Signatur: Der Workflow erwartet die Repository-Secrets `BBL_KEYSTORE_BASE64`, `B
 `BBL_KEY_ALIAS` und `BBL_KEY_PASSWORD`. Fehlen sie, wird mit dem Debug-Key signiert. Lokal signiert
 `./gradlew :app:assembleRelease`, wenn `BBL_KEYSTORE_PATH` und die Passwort-Variablen gesetzt sind.
 
+## Login
+
+Jedes Profil hat ein Passwort. Beim ersten Besuch wählt man sein Profil und legt das Passwort fest (bestehende
+Profile ohne Passwort bekommen es beim ersten Login), neue Profile werden mit Name und Passwort angelegt. Der Browser
+merkt sich die Anmeldung per Token, bis man sich abmeldet oder das Passwort ändert. Nur das eigene Profil lässt sich
+bearbeiten oder löschen. Der Host (die App selbst, Zugriff über 127.0.0.1) kann Passwörter zurücksetzen, falls jemand
+seines vergisst: Mitglied öffnen → „Zurücksetzen“, danach legt die Person beim nächsten Login ein neues fest.
+
 ## Benutzung
 
 1. App auf dem Host-Handy starten. Der Server läuft als Vordergrund-Dienst (Benachrichtigung), WLAN und CPU werden wach gehalten.

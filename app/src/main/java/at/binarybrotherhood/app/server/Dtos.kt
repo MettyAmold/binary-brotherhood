@@ -227,12 +227,27 @@ data class BootstrapDto(
 @Serializable
 data class OkDto(val ok: Boolean = true, val id: Long? = null)
 
+// ---------- Login ----------
+
+/** Öffentliche Profilliste für den Login-Bildschirm (ohne Statistik, ohne Hash). */
+@Serializable
+data class AuthMemberDto(val id: Long, val name: String, val color: String, val hasAvatar: Boolean, val hasPassword: Boolean, val createdAt: Long)
+
+@Serializable
+data class AuthStateDto(val member: MemberDto, val isHost: Boolean)
+
+@Serializable
+data class AuthResponseDto(val token: String, val member: MemberDto, val isHost: Boolean)
+
 @Serializable
 data class ErrorDto(val error: String)
 
 // ---------- Anfragen ----------
 
 @Serializable data class MemberRequest(val name: String, val motto: String = "", val color: String? = null)
+@Serializable data class LoginRequest(val memberId: Long, val password: String)
+@Serializable data class RegisterRequest(val name: String, val password: String, val color: String? = null)
+@Serializable data class PasswordChangeRequest(val oldPassword: String = "", val newPassword: String)
 @Serializable data class GameRequest(
     val name: String,
     val description: String = "",

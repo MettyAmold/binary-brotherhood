@@ -26,6 +26,17 @@ interface MemberDao {
     @Insert suspend fun insert(m: MemberEntity): Long
     @Update suspend fun update(m: MemberEntity)
     @Query("DELETE FROM members WHERE id = :id") suspend fun delete(id: Long)
+    @Query("UPDATE members SET password = :hash WHERE id = :id") suspend fun setPassword(id: Long, hash: String)
+}
+
+@Dao
+interface AuthDao {
+    @Query("SELECT * FROM auth_tokens WHERE tokenHash = :hash") suspend fun byHash(hash: String): AuthTokenEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(t: AuthTokenEntity)
+    @Query("UPDATE auth_tokens SET lastUsedAt = :ts WHERE tokenHash = :hash") suspend fun touch(hash: String, ts: Long)
+    @Query("DELETE FROM auth_tokens WHERE tokenHash = :hash") suspend fun delete(hash: String)
+    @Query("DELETE FROM auth_tokens WHERE memberId = :memberId") suspend fun deleteForMember(memberId: Long)
+    @Query("SELECT COUNT(*) FROM auth_tokens WHERE memberId = :memberId") suspend fun countForMember(memberId: Long): Int
 }
 
 @Dao

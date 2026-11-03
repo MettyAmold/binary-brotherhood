@@ -3,9 +3,13 @@ package at.binarybrotherhood.app.server
 import android.content.Context
 import android.util.Log
 import at.binarybrotherhood.app.BuildConfig
+import at.binarybrotherhood.app.data.AppDatabase
+import at.binarybrotherhood.app.domain.AuthService
 import at.binarybrotherhood.app.domain.BadRequestException
+import at.binarybrotherhood.app.domain.ForbiddenException
 import at.binarybrotherhood.app.domain.NotFoundException
 import at.binarybrotherhood.app.domain.Repository
+import at.binarybrotherhood.app.domain.UnauthorizedException
 import at.binarybrotherhood.app.util.NetUtils
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -14,14 +18,19 @@ import io.ktor.http.content.forEachPart
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.request.uri
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -39,6 +48,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
 import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
+import io.ktor.util.AttributeKey
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -54,6 +64,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.CRC32
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -65,9 +77,15 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
     companion object {
         const val DEFAULT_PORT = 8080
         private const val TAG = "LanServer"
+        private val SessionKey = AttributeKey<AuthService.Session>("bb.session")
+        /** Endpunkte, die ohne Login erreichbar sind (Login-Bildschirm, Avatare). */
+        private val PUBLIC_PATHS = setOf("/api/auth/members", "/api/auth/login", "/api/auth/register", "/api/ping")
+        private val AVATAR_PATH = Regex("""/api/members/\d+/avatar""")
+        private val LOOPBACK = setOf("127.0.0.1", "::1", "0:0:0:0:0:0:0:1", "localhost")
     }
 
     private val repo = Repository(context)
+    private val auth = AuthService(AppDatabase.get(context))
     private val steam = SteamClient()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
@@ -116,9 +134,36 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         install(StatusPages) {
             exception<BadRequestException> { call, e -> call.respond(HttpStatusCode.BadRequest, ErrorDto(e.message ?: "Ungültige Anfrage")) }
             exception<NotFoundException> { call, e -> call.respond(HttpStatusCode.NotFound, ErrorDto(e.message ?: "Nicht gefunden")) }
+            exception<UnauthorizedException> { call, e -> call.respond(HttpStatusCode.Unauthorized, ErrorDto(e.message ?: "Bitte anmelden")) }
+            exception<ForbiddenException> { call, e -> call.respond(HttpStatusCode.Forbidden, ErrorDto(e.message ?: "Keine Berechtigung")) }
             exception<Throwable> { call, e ->
                 Log.e(TAG, "Fehler bei ${call.request.local.uri}", e)
                 call.respond(HttpStatusCode.InternalServerError, ErrorDto(e.message ?: "Interner Fehler"))
+            }
+        }
+
+        // Langsame Anfragen protokollieren (Diagnose per logcat)
+        intercept(ApplicationCallPipeline.Monitoring) {
+            val t0 = System.nanoTime()
+            try {
+                proceed()
+            } finally {
+                val ms = (System.nanoTime() - t0) / 1_000_000
+                if (ms > 300) Log.w(TAG, "Langsam: ${call.request.httpMethod.value} ${call.request.uri} (${ms} ms)")
+            }
+        }
+
+        // Login-Pflicht für die API: Token aus dem Authorization-Header auflösen
+        intercept(ApplicationCallPipeline.Plugins) {
+            val path = call.request.path()
+            if (!path.startsWith("/api/")) return@intercept
+            val token = call.request.headers["Authorization"]?.removePrefix("Bearer")?.trim()
+            val session = auth.resolve(token)
+            if (session != null) {
+                call.attributes.put(SessionKey, session)
+            } else if (path !in PUBLIC_PATHS && !(call.request.httpMethod == io.ktor.http.HttpMethod.Get && AVATAR_PATH.matches(path))) {
+                call.respond(HttpStatusCode.Unauthorized, ErrorDto("Bitte anmelden"))
+                finish()
             }
         }
 
@@ -152,11 +197,33 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         }
     }
 
+    private class Asset(val bytes: ByteArray, val type: ContentType, val etag: String)
+    private val assetCache = ConcurrentHashMap<String, Asset>()
+
+    /** Lädt eine Web-Datei einmal aus den Assets und hält sie samt ETag im Speicher. */
+    private fun asset(clean: String): Asset? = assetCache[clean] ?: run {
+        val bytes = runCatching { context.assets.open("web/$clean").use { it.readBytes() } }.getOrNull() ?: return null
+        val crc = CRC32().apply { update(bytes) }.value
+        Asset(bytes, contentTypeFor(clean), "\"${java.lang.Long.toHexString(crc)}-${bytes.size}\"").also { assetCache[clean] = it }
+    }
+
     private suspend fun ApplicationCall.serveAsset(path: String): Boolean {
         val clean = path.trimStart('/').ifBlank { "index.html" }
         if (clean.contains("..")) return false
-        val bytes = runCatching { context.assets.open("web/$clean").use { it.readBytes() } }.getOrNull() ?: return false
-        val type = when (clean.substringAfterLast('.', "").lowercase()) {
+        val a = asset(clean) ?: return false
+        val longLived = clean.startsWith("fonts/") || clean.startsWith("img/") || clean.endsWith(".png")
+        response.header("Cache-Control", if (longLived) "public, max-age=604800" else "public, max-age=60, must-revalidate")
+        response.header("ETag", a.etag)
+        if (request.headers["If-None-Match"]?.split(",")?.any { it.trim() == a.etag } == true) {
+            respond(HttpStatusCode.NotModified)
+            return true
+        }
+        respondBytes(a.bytes, a.type)
+        return true
+    }
+
+    private fun contentTypeFor(clean: String): ContentType {
+        return when (clean.substringAfterLast('.', "").lowercase()) {
             "html" -> ContentType.Text.Html
             "css" -> ContentType.Text.CSS
             "js", "mjs" -> ContentType.Text.JavaScript
@@ -170,13 +237,16 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             "webmanifest" -> ContentType("application", "manifest+json")
             else -> ContentType.Application.OctetStream
         }
-        val cacheable = clean.startsWith("fonts/") || clean.endsWith(".png")
-        response.header("Cache-Control", if (cacheable) "public, max-age=86400" else "no-cache")
-        respondBytes(bytes, type)
-        return true
     }
 
-    private fun ApplicationCall.actor(): Long? = request.headers["X-Member-Id"]?.toLongOrNull()
+    private fun ApplicationCall.session(): AuthService.Session = attributes.getOrNull(SessionKey) ?: throw UnauthorizedException("Bitte anmelden")
+    private fun ApplicationCall.actor(): Long? = attributes.getOrNull(SessionKey)?.member?.id
+    /** Der Host ist die App selbst (WebView über 127.0.0.1); nur sie darf Passwörter zurücksetzen. */
+    private fun ApplicationCall.isHost(): Boolean = runCatching { request.local.remoteAddress }.getOrNull() in LOOPBACK
+    private fun ApplicationCall.requireSelfOrHost(memberId: Long) {
+        if (session().member.id != memberId && !isHost()) throw ForbiddenException("Nur das eigene Profil kann bearbeitet werden")
+    }
+    private fun ApplicationCall.requireHost() { if (!isHost()) throw ForbiddenException("Nur der Host darf das") }
     private fun ApplicationCall.id(name: String = "id"): Long = parameters[name]?.toLongOrNull() ?: throw BadRequestException("Ungültige ID")
     private fun ApplicationCall.eventId(): Long? = request.queryParameters["eventId"]?.toLongOrNull()
 
@@ -194,13 +264,43 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             call.respond(HostInfoDto(NetUtils.localAddresses(context), port, sessions.size, BuildConfig.VERSION_NAME, repo.dbPath))
         }
 
+        // ---- Login
+        route("/auth") {
+            get("/members") { call.respond(repo.authMembers()) }
+            post("/login") {
+                val r = call.receive<LoginRequest>()
+                val (m, token) = auth.login(r.memberId, r.password, call.request.headers["User-Agent"] ?: "")
+                broadcast("members")
+                call.respond(AuthResponseDto(token, repo.member(m.id), call.isHost()))
+            }
+            post("/register") {
+                val r = call.receive<RegisterRequest>()
+                auth.validatePassword(r.password)
+                val m = repo.createMember(MemberRequest(name = r.name, color = r.color))
+                auth.setPassword(m.id, r.password)
+                val token = auth.issueToken(m.id, call.request.headers["User-Agent"] ?: "")
+                broadcast("members")
+                call.respond(AuthResponseDto(token, repo.member(m.id), call.isHost()))
+            }
+            get("/me") { val s = call.session(); call.respond(AuthStateDto(repo.member(s.member.id), call.isHost())) }
+            post("/logout") { auth.logout(call.session().tokenHash); call.respond(OkDto()) }
+            post("/password") {
+                val s = call.session()
+                val r = call.receive<PasswordChangeRequest>()
+                auth.changePassword(s.member.id, r.oldPassword, r.newPassword)
+                val token = auth.issueToken(s.member.id, call.request.headers["User-Agent"] ?: "")
+                call.respond(AuthResponseDto(token, repo.member(s.member.id), call.isHost()))
+            }
+            post("/reset/{id}") { call.requireHost(); auth.resetPassword(call.id()); broadcast("members"); call.respond(OkDto()) }
+        }
+
         // ---- Mitglieder
         route("/members") {
             get { call.respond(repo.members()) }
             post { call.respond(repo.createMember(call.receive()).also { broadcast("members") }) }
             get("/{id}") { call.respond(repo.member(call.id())) }
-            put("/{id}") { call.respond(repo.updateMember(call.id(), call.receive()).also { broadcast("members") }) }
-            delete("/{id}") { repo.deleteMember(call.id()); broadcast("members"); call.respond(OkDto()) }
+            put("/{id}") { call.requireSelfOrHost(call.id()); call.respond(repo.updateMember(call.id(), call.receive()).also { broadcast("members") }) }
+            delete("/{id}") { call.requireSelfOrHost(call.id()); repo.deleteMember(call.id()); broadcast("members"); call.respond(OkDto()) }
             get("/{id}/xp") { call.respond(repo.xpLog(call.id())) }
             get("/{id}/avatar") {
                 val f = repo.avatarFile(call.id())
@@ -211,6 +311,7 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             }
             post("/{id}/avatar") {
                 val id = call.id()
+                call.requireSelfOrHost(id)
                 var bytes: ByteArray? = null
                 val ct = call.request.headers["Content-Type"] ?: ""
                 if (ct.startsWith("multipart/")) {

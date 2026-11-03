@@ -1,5 +1,6 @@
 package at.binarybrotherhood.app.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -29,6 +30,18 @@ data class MemberEntity(
     val color: String,
     val hasAvatar: Boolean = false,
     val createdAt: Long,
+    /** PBKDF2-Hash im Format pbkdf2:<Iterationen>:<Salt>:<Hash>; leer = noch kein Passwort gesetzt */
+    @ColumnInfo(defaultValue = "") val password: String = "",
+)
+
+/** Login-Sitzung eines Mitglieds auf einem Gerät. Gespeichert wird nur der SHA-256 des Tokens. */
+@Entity(tableName = "auth_tokens", indices = [Index("memberId")])
+data class AuthTokenEntity(
+    @PrimaryKey val tokenHash: String,
+    val memberId: Long,
+    val device: String,
+    val createdAt: Long,
+    val lastUsedAt: Long,
 )
 
 @Entity(tableName = "games", indices = [Index("steamAppId")])

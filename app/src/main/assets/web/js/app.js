@@ -1,5 +1,5 @@
-// Einstieg: Shell, Navigation, Profil-Auswahl und Routing zu den Ansichten.
-import { h, mount, avatar, modal, toast, field, input, confirmDialog } from "./ui.js";
+// Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
+import { h, mount, avatar, modal, toast, field, input } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api } from "./api.js";
 import { renderGames } from "./views/games.js";
@@ -51,9 +51,9 @@ function renderShell() {
 
 function meChip() {
   const me = store.me;
-  return h("div", { class: "me-chip", id: "me-chip", onClick: () => chooseProfile(true) },
+  return h("div", { class: "me-chip", id: "me-chip", onClick: profileMenu },
     avatar(me, "sm"),
-    h("span", { class: "name" }, me ? me.name : "Wer bist du?"),
+    h("span", { class: "name" }, me ? me.name : "Anmelden"),
   );
 }
 
@@ -70,67 +70,150 @@ async function renderRoute() {
   window.scrollTo({ top: 0 });
 }
 
-/** Profil wählen oder neu anlegen. Wird beim ersten Besuch erzwungen. */
-export function chooseProfile(allowCancel) {
-  return new Promise((resolve) => {
-    const list = h("div", { class: "pick-list" });
-    const renderList = () => {
-      mount(list, store.members.map(m => h("div", { class: "it", onClick: () => { store.selectMember(m.id); ctx.close(); resolve(m); } },
-        avatar(m, "sm"), h("div", { class: "grow" }, h("div", {}, m.name), h("div", { class: "small muted" }, `Level ${m.level} · ${m.rank}`)),
-        store.me && store.me.id === m.id ? h("span", { class: "chip gold" }, "aktiv") : null,
-      )));
-      if (!store.members.length) list.append(h("div", { class: "muted small" }, "Noch keine Profile. Lege das erste an!"));
-    };
-    renderList();
-    const name = input({ placeholder: "Dein Name", maxlength: 40 });
-    const ctx = modal({
-      title: "Wer bist du?",
-      onClose: () => resolve(store.me),
-      body: h("div", {},
-        h("p", { class: "muted small" }, "Wähle dein Profil. Es wird auf diesem Gerät gemerkt, alle Daten liegen zentral am Host-Handy."),
-        list,
-        h("hr", { class: "sep" }),
-        h("div", { class: "row" }, h("div", { class: "grow" }, field("Neues Profil", name)),
-          h("button", { class: "btn primary", style: { marginTop: "10px" }, onClick: async () => {
-            if (!name.value.trim()) return;
-            const m = await api.post("/api/members", { name: name.value.trim() });
-            await store.refreshMembers();
-            store.selectMember(m.id);
-            toast(`Willkommen in der Bruderschaft, ${m.name}!`, "success");
-            ctx.close(); resolve(m);
-          } }, "Anlegen")),
-      ),
-      buttons: allowCancel ? [{ label: "Schließen" }] : [],
-    });
-    name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ctx.body.querySelector(".btn.primary").click(); } });
+// ---------- Login ----------
+
+const passwordInput = (attrs = {}) => input({ type: "password", autocomplete: "current-password", ...attrs });
+
+/** Login-Bildschirm: Profil wählen und Passwort eingeben oder neues Profil anlegen. */
+export async function renderLogin(message) {
+  let members = [];
+  try {
+    members = await api.get("/api/auth/members", { silent: true });
+  } catch (e) {
+    mount(root, offlineGate());
+    return;
+  }
+  const list = h("div", { class: "pick-list" }, members.length
+    ? members.map(m => h("div", { class: "it", onClick: () => loginDialog(m) },
+        avatar(m, "sm"), h("div", { class: "grow" }, h("div", {}, m.name), !m.hasPassword ? h("div", { class: "small muted" }, "noch kein Passwort – beim ersten Login festlegen") : null),
+        h("span", { class: "muted" }, "›")))
+    : h("div", { class: "muted small" }, "Noch keine Profile. Lege das erste an!"));
+  mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
+    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
+    message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null,
+    h("p", { class: "muted small" }, "Wer bist du? Melde dich mit deinem Profil an."),
+    list,
+    h("hr", { class: "sep" }),
+    h("button", { class: "btn primary block", onClick: registerDialog }, "Neues Profil anlegen"),
+  )));
+}
+
+function offlineGate() {
+  return h("div", { class: "gate" }, h("div", { class: "card" },
+    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
+    h("p", { class: "muted" }, "Das Host-Handy antwortet nicht. Bist du im selben WLAN?"),
+    h("button", { class: "btn primary block", onClick: () => location.reload() }, "Erneut versuchen")));
+}
+
+function loginDialog(m) {
+  const pw = passwordInput({ placeholder: m.hasPassword ? "Passwort" : "Neues Passwort (mind. 4 Zeichen)", autocomplete: m.hasPassword ? "current-password" : "new-password" });
+  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
+  const submit = async (ctx) => {
+    if (!m.hasPassword && pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
+    if (!pw.value) { toast("Passwort fehlt", "error"); return false; }
+    const r = await api.post("/api/auth/login", { memberId: m.id, password: pw.value }, { noAuthRedirect: true });
+    store.applyAuth(r);
+    toast(`Willkommen zurück, ${r.member.name}!`, "success");
+    init();
+  };
+  const ctx = modal({
+    title: `Anmelden als ${m.name}`,
+    body: h("div", {},
+      !m.hasPassword ? h("p", { class: "muted small" }, "Dieses Profil hat noch kein Passwort. Lege jetzt eines fest – es gilt ab sofort für alle Geräte.") : null,
+      field(m.hasPassword ? "Passwort" : "Neues Passwort", pw),
+      !m.hasPassword ? field("Wiederholen", pw2) : null),
+    buttons: [{ label: "Abbrechen" }, { label: "Anmelden", class: "primary", onClick: submit }],
+  });
+  const onEnter = (e) => { if (e.key === "Enter") { e.preventDefault(); ctx.body.closest(".modal").querySelector(".modal-foot .btn.primary").click(); } };
+  pw.addEventListener("keydown", onEnter); pw2.addEventListener("keydown", onEnter);
+  setTimeout(() => pw.focus(), 50);
+}
+
+function registerDialog() {
+  const name = input({ placeholder: "Dein Name", maxlength: 40, autocomplete: "nickname" });
+  const pw = passwordInput({ placeholder: "mind. 4 Zeichen", autocomplete: "new-password" });
+  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
+  modal({
+    title: "Neues Profil",
+    body: h("div", {},
+      h("p", { class: "muted small" }, "Das Passwort schützt dein Profil, damit niemand in deinem Namen abstimmt oder schreibt."),
+      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2)),
+    buttons: [{ label: "Abbrechen" }, { label: "Anlegen", class: "primary", onClick: async () => {
+      if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
+      if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
+      if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
+      const r = await api.post("/api/auth/register", { name: name.value.trim(), password: pw.value });
+      store.applyAuth(r);
+      toast(`Willkommen in der Bruderschaft, ${r.member.name}!`, "success");
+      init();
+    } }],
   });
 }
 
-/** Stellt sicher, dass ein Profil gewählt ist (für schreibende Aktionen). */
+/** Menü hinter dem Profil-Chip oben rechts. */
+function profileMenu() {
+  const me = store.me;
+  if (!me) return;
+  const ctx = modal({
+    title: me.name,
+    body: h("div", { class: "pick-list" },
+      h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
+      h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
+      h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
+    ),
+    buttons: [{ label: "Schließen" }],
+  });
+}
+
+export function changePasswordDialog() {
+  const old = passwordInput({ placeholder: "Aktuelles Passwort" });
+  const pw = passwordInput({ placeholder: "mind. 4 Zeichen", autocomplete: "new-password" });
+  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
+  modal({
+    title: "Passwort ändern",
+    body: h("div", {}, field("Aktuelles Passwort", old), field("Neues Passwort", pw), field("Wiederholen", pw2),
+      h("p", { class: "muted small" }, "Andere Geräte werden abgemeldet.")),
+    buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
+      if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
+      if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
+      const r = await api.post("/api/auth/password", { oldPassword: old.value, newPassword: pw.value }, { noAuthRedirect: true });
+      store.applyAuth(r);
+      toast("Passwort geändert", "success");
+    } }],
+  });
+}
+
+/** Für schreibende Aktionen: liefert das angemeldete Mitglied (ohne Login gibt es die App nicht). */
 export async function requireMe() {
   if (store.me) return store.me;
-  const m = await chooseProfile(true);
-  if (!m) toast("Bitte zuerst ein Profil wählen", "error");
-  return m;
+  renderLogin();
+  return null;
 }
 
 async function init() {
+  let loggedIn;
+  try {
+    loggedIn = await store.loadSession();
+  } catch (e) {
+    mount(root, offlineGate());
+    return;
+  }
+  if (!loggedIn) { renderLogin(); return; }
   try {
     await store.bootstrap();
   } catch (e) {
-    mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
-      h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
-      h("p", { class: "muted" }, "Das Host-Handy antwortet nicht. Bist du im selben WLAN?"),
-      h("button", { class: "btn primary block", onClick: () => location.reload() }, "Erneut versuchen"))));
+    mount(root, offlineGate());
     return;
   }
   connect();
   await renderRoute();
-  if (!store.me) {
-    // Erster Besuch: Profil wählen (kann übersprungen werden, dann nur lesend)
-    chooseProfile(true);
-  }
 }
+
+window.addEventListener("bb:unauthorized", () => {
+  if (!store.me) return;
+  store.me = null; store.isHost = false;
+  renderLogin("Deine Sitzung ist abgelaufen, bitte melde dich neu an.");
+});
 
 window.addEventListener("hashchange", renderRoute);
 on("connection", (ok) => { const c = document.getElementById("conn"); if (c) c.classList.toggle("on", !!ok); });

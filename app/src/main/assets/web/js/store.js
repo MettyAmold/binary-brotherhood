@@ -1,20 +1,44 @@
 // Globaler Zustand: aktuelles Mitglied, Mitgliederliste, LAN-Ausgabe, Live-Verbindung.
-import { api } from "./api.js";
+import { api, getToken, setToken } from "./api.js";
 
 const listeners = new Map(); // topic -> Set<fn>
 
 export const store = {
   me: null,
+  isHost: false,
   members: [],
   event: null,
   events: [],
   connected: false,
   appName: "BINARY BROTHERHOOD",
 
-  get memberId() { try { return localStorage.getItem("bb.memberId"); } catch { return null; } },
-  set memberId(v) { try { v ? localStorage.setItem("bb.memberId", v) : localStorage.removeItem("bb.memberId"); } catch { /* privat */ } },
-
   member(id) { return this.members.find(m => m.id === Number(id)) || null; },
+
+  /** Prüft das gespeicherte Token. Liefert true, wenn eine gültige Sitzung besteht. */
+  async loadSession() {
+    if (!getToken()) { this.me = null; return false; }
+    try {
+      const s = await api.get("/api/auth/me", { silent: true, noAuthRedirect: true });
+      this.me = s.member; this.isHost = !!s.isHost;
+      return true;
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) { setToken(null); this.me = null; return false; }
+      throw e; // Host nicht erreichbar
+    }
+  },
+
+  applyAuth(resp) {
+    setToken(resp.token);
+    this.me = resp.member; this.isHost = !!resp.isHost;
+    emit("me");
+  },
+
+  async logout() {
+    try { await api.post("/api/auth/logout", {}, { silent: true, noAuthRedirect: true }); } catch { /* egal */ }
+    setToken(null);
+    this.me = null; this.isHost = false;
+    emit("me");
+  },
 
   async bootstrap() {
     const b = await api.get("/api/bootstrap");
@@ -22,14 +46,13 @@ export const store = {
     this.event = b.event;
     this.events = b.events;
     this.appName = b.appName;
-    this.me = this.member(this.memberId);
-    if (this.memberId && !this.me) this.memberId = null;
+    if (this.me) this.me = this.member(this.me.id) || this.me;
     emit("members"); emit("events");
   },
 
   async refreshMembers() {
     this.members = await api.get("/api/members");
-    this.me = this.member(this.memberId);
+    if (this.me) this.me = this.member(this.me.id) || this.me;
     emit("members");
   },
 
@@ -37,12 +60,6 @@ export const store = {
     const b = await api.get("/api/bootstrap");
     this.events = b.events; this.event = b.event;
     emit("events");
-  },
-
-  selectMember(id) {
-    this.memberId = id ? String(id) : null;
-    this.me = this.member(id);
-    emit("me");
   },
 };
 

@@ -21,6 +21,7 @@ import at.binarybrotherhood.app.data.SuggestionEntity
 import at.binarybrotherhood.app.data.SuggestionVoteEntity
 import at.binarybrotherhood.app.data.XpLogEntity
 import at.binarybrotherhood.app.server.AttendanceRequest
+import at.binarybrotherhood.app.server.AuthMemberDto
 import at.binarybrotherhood.app.server.BalanceDto
 import at.binarybrotherhood.app.server.CommentDto
 import at.binarybrotherhood.app.server.CostOverviewDto
@@ -167,6 +168,10 @@ class Repository(private val context: Context, private val db: AppDatabase = App
 
     suspend fun member(id: Long): MemberDto = members().firstOrNull { it.id == id } ?: throw NotFoundException("Mitglied nicht gefunden")
 
+    /** Profilliste für den Login-Bildschirm, ohne Anmeldung abrufbar. */
+    suspend fun authMembers(): List<AuthMemberDto> =
+        db.members().all().map { AuthMemberDto(it.id, it.name, it.color, it.hasAvatar, it.password.isNotEmpty(), it.createdAt) }
+
     suspend fun createMember(req: MemberRequest): MemberDto {
         val name = req.name.trim()
         if (name.isBlank()) throw BadRequestException("Name fehlt")
@@ -187,6 +192,7 @@ class Repository(private val context: Context, private val db: AppDatabase = App
     }
 
     suspend fun deleteMember(id: Long) {
+        db.auth().deleteForMember(id)
         db.members().delete(id)
         avatarFile(id).delete()
     }
