@@ -249,12 +249,21 @@ get("/api/discord", async c => {
   let widget: unknown = null, widgetError: string | null = null;
   if (cfg.guildId) {
     try {
-      const r = await fetch(`https://discord.com/api/guilds/${cfg.guildId}/widget.json`, { cf: { cacheTtl: 60 } } as RequestInit);
+      const r = await fetch(`https://discord.com/api/guilds/${cfg.guildId}/widget.json`, { cf: { cacheTtl: 20 } } as RequestInit);
       if (r.ok) {
         const w = await r.json() as any;
-        widget = { name: w.name, presenceCount: w.presence_count, instantInvite: w.instant_invite,
-          channels: (w.channels ?? []).map((ch: any) => ({ id: ch.id, name: ch.name })),
-          members: (w.members ?? []).slice(0, 60).map((m: any) => ({ name: m.username, status: m.status, avatar: m.avatar_url, channelId: m.channel_id ?? null, game: m.activity?.name ?? null })) };
+        const member = (m: any) => ({ name: m.username, status: m.status, avatar: m.avatar_url ?? null, game: m.activity?.name ?? null,
+          muted: !!(m.mute || m.self_mute), deafened: !!(m.deaf || m.self_deaf) });
+        const all = (w.members ?? []) as any[];
+        // Sprachkanäle mit ihren Leuten, in Discord-Reihenfolge; Kanäle, die das Widget nicht nennt, gesammelt
+        const known = new Map<string, { name: string; position: number }>((w.channels ?? []).map((ch: any) => [ch.id, { name: ch.name, position: ch.position ?? 0 }]));
+        const groups = new Map<string, any[]>();
+        for (const m of all) if (m.channel_id) (groups.get(m.channel_id) ?? groups.set(m.channel_id, []).get(m.channel_id)!).push(member(m));
+        const voice = [...groups.entries()].map(([id, members]) => ({ id, name: known.get(id)?.name ?? "Privater Sprachkanal", position: known.get(id)?.position ?? 999, members }))
+          .sort((a, b) => a.position - b.position);
+        widget = { name: w.name, presenceCount: w.presence_count, instantInvite: w.instant_invite, voice,
+          inVoice: voice.reduce((n, ch) => n + ch.members.length, 0),
+          online: all.filter(m => !m.channel_id).slice(0, 100).map(member), listedOnline: all.length };
       } else widgetError = r.status === 403 ? "Server-Widget ist in Discord nicht aktiviert (Servereinstellungen → Widget)" : `Discord antwortet mit ${r.status}`;
     } catch (e) { widgetError = `Discord nicht erreichbar: ${(e as Error).message}`; }
   }

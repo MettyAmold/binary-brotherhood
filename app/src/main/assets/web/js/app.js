@@ -1,5 +1,5 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
-import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog } from "./ui.js";
+import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog, initials } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api, authHeaders } from "./api.js";
 import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
@@ -59,27 +59,38 @@ async function loadDiscord() {
 }
 function discordChip() {
   if (!discord.invite && !discord.guildId) return h("span", { id: "discord-chip", class: "hidden" });
-  const n = discord.widget?.presenceCount;
-  return h("button", { id: "discord-chip", class: "btn sm discord-btn", title: "Discord-Server", onClick: discordDialog }, "💬 Discord", n != null ? h("span", { class: "small" }, ` ${n}`) : null);
+  const w = discord.widget;
+  const title = w ? `${w.inVoice} im Sprachchat · ${w.presenceCount} online` : "Discord-Server";
+  return h("button", { id: "discord-chip", class: "btn sm discord-btn", title, onClick: discordDialog }, "💬 Discord", w && w.inVoice ? h("span", { class: "small" }, ` 🔊 ${w.inVoice}`) : null);
 }
 async function discordDialog() {
   await loadDiscord();
   const w = discord.widget;
   const joinUrl = discord.invite || w?.instantInvite || "";
-  const byChannel = new Map();
-  for (const m of w?.members || []) if (m.channelId) (byChannel.get(m.channelId) || byChannel.set(m.channelId, []).get(m.channelId)).push(m);
-  const member = (m) => h("div", { class: "discord-member" }, m.avatar ? h("img", { src: m.avatar, alt: "" }) : null, h("span", { class: `st ${m.status}` }), h("span", { class: "grow" }, m.name), m.game ? h("span", { class: "small muted" }, "🎮 " + m.game) : null);
+  const member = (m) => h("div", { class: "discord-member" },
+    m.avatar ? h("img", { src: m.avatar, alt: "" }) : h("span", { class: "avatar xs" }, initials(m.name)),
+    h("span", { class: `st ${m.status}` }), h("span", { class: "grow" }, m.name),
+    m.deafened ? h("span", { title: "taub geschaltet" }, "🔇") : m.muted ? h("span", { title: "stummgeschaltet", class: "small muted" }, "stumm") : null,
+    m.game ? h("span", { class: "small muted" }, "🎮 " + m.game) : null);
+  const onlineList = h("div", { class: "stack hidden", style: { marginTop: "6px" } }, (w?.online || []).map(member));
   modal({
     title: w?.name ? `Discord: ${w.name}` : "Discord",
     body: h("div", {},
       joinUrl ? h("a", { class: "btn discord-btn block", href: joinUrl, target: "_blank", rel: "noopener" }, "Server beitreten / öffnen") : h("p", { class: "muted small" }, "Kein Einladungslink hinterlegt."),
       discord.widgetError ? h("p", { class: "small", style: { color: "#ff9a9a", marginTop: "10px" } }, discord.widgetError) : null,
-      w ? h("div", { style: { marginTop: "12px" } },
-        h("div", { class: "small muted" }, `${w.presenceCount} online`),
-        (w.channels || []).filter(ch => byChannel.has(ch.id)).map(ch => h("div", { style: { marginTop: "10px" } }, h("strong", { class: "small" }, "🔊 " + ch.name), h("div", { class: "stack", style: { marginTop: "4px" } }, byChannel.get(ch.id).map(member)))),
-        h("div", { class: "stack", style: { marginTop: "10px" } }, (w.members || []).filter(m => !m.channelId).map(member))) : null,
+      w ? h("div", { style: { marginTop: "14px" } },
+        h("h3", { style: { fontSize: "15px" } }, "🔊 Sprachkanäle"),
+        w.voice.length
+          ? w.voice.map(ch => h("div", { class: "card", style: { padding: "8px 10px", marginTop: "8px" } },
+              h("div", { class: "row between" }, h("strong", { class: "small" }, ch.name), h("span", { class: "chip" }, ch.members.length)),
+              h("div", { class: "stack", style: { marginTop: "6px" } }, ch.members.map(member))))
+          : h("p", { class: "muted small", style: { marginTop: "6px" } }, "Gerade sitzt niemand im Sprachchat."),
+        h("button", { class: "btn sm ghost", style: { marginTop: "12px" }, onClick: (e) => { onlineList.classList.toggle("hidden"); e.target.textContent = onlineList.classList.contains("hidden") ? `Weitere ${w.presenceCount - w.inVoice} online anzeigen` : "Ausblenden"; } },
+          `Weitere ${w.presenceCount - w.inVoice} online anzeigen`),
+        onlineList,
+        h("p", { class: "small muted", style: { marginTop: "10px" } }, "Discord aktualisiert das Widget mit kurzer Verzögerung. Wer im Sprachchat ist, erscheint hier, wenn der Kanal für alle sichtbar ist.")) : null,
       store.isAdmin ? h("p", { class: "small muted", style: { marginTop: "12px" } }, "Einstellungen: Profil-Menü → Discord-Server.") : null),
-    buttons: [{ label: "Schließen" }],
+    buttons: [{ label: "Aktualisieren", onClick: () => { setTimeout(discordDialog, 50); } }, { label: "Schließen" }],
   });
 }
 function discordSettingsDialog() {
