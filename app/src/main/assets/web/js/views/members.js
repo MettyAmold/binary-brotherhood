@@ -1,0 +1,105 @@
+// Mitglieder: Profile, Avatar-Upload, XP, Level und Rang.
+import { h, mount, modal, confirmDialog, avatar, empty, fmtDate, toast, input, field, resizeImage, timeAgo } from "../ui.js";
+import { api } from "../api.js";
+import { store, on } from "../store.js";
+import { chooseProfile } from "../app.js";
+
+const COLORS = ["#C9A24D", "#D96C4F", "#4FA3D9", "#6BBF59", "#B05ED9", "#E0B04C", "#48C9B0", "#E05C8A", "#8E9BFF", "#F08A24", "#5DD39E", "#D64545"];
+
+export async function renderMembers(main, params) {
+  const content = h("div");
+  let detailId = params[0] ? Number(params[0]) : null;
+
+  const draw = () => {
+    if (detailId) { const m = store.member(detailId); if (m) { mount(content, profile(m)); return; } detailId = null; }
+    const list = store.members.slice().sort((a, b) => b.xp - a.xp);
+    mount(content,
+      h("div", { class: "page-head" }, h("h2", {}, "Bruderschaft"), h("span", { class: "chip" }, `${list.length} Mitglieder`),
+        h("button", { class: "btn", onClick: () => chooseProfile(true) }, store.me ? "Profil wechseln" : "Profil wählen")),
+      list.length ? h("div", { class: "grid tight" }, list.map((m, i) => h("div", { class: `card member-card ${store.me && store.me.id === m.id ? "me" : ""}`, onClick: () => { location.hash = `#/members/${m.id}`; } },
+        h("div", { style: { position: "relative" } }, avatar(m, "lg"), h("span", { class: "level-badge", style: { position: "absolute", right: "-6px", bottom: "-4px" } }, m.level)),
+        h("div", { style: { fontWeight: 700, marginTop: "4px" } }, m.name),
+        h("div", { class: "rank" }, m.rank),
+        h("div", { class: "small muted" }, `${m.xp} XP${i === 0 && m.xp > 0 ? " · 👑" : ""}`),
+        h("div", { class: "xp-bar" }, h("i", { style: { width: `${Math.round(m.progress * 100)}%` } })),
+      ))) : empty("🛡️", "Noch keine Mitglieder.", h("button", { class: "btn primary", onClick: () => chooseProfile(true) }, "Profil anlegen")),
+    );
+  };
+
+  const profile = (m) => {
+    const mine = store.me && store.me.id === m.id;
+    const log = h("div", { class: "xp-log" }, h("div", { class: "muted small" }, "Lade …"));
+    api.get(`/api/members/${m.id}/xp`).then(entries => mount(log, entries.length ? entries.map(e => h("div", { class: "it" }, h("span", {}, e.label), h("span", { class: "muted small" }, timeAgo(e.createdAt)), h("strong", { class: "gold" }, `+${e.amount}`))) : h("div", { class: "muted small" }, "Noch keine XP – spiel mit, schreib was, bring was mit!"))).catch(() => {});
+    const file = h("input", { type: "file", accept: "image/*", class: "hidden", onChange: async () => {
+      const f = file.files[0]; if (!f) return;
+      try {
+        toast("Bild wird hochgeladen …");
+        const blob = await resizeImage(f, 512);
+        await fetch(`/api/members/${m.id}/avatar`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob }).then(r => { if (!r.ok) throw new Error("Upload fehlgeschlagen"); });
+        toast("Profilbild gespeichert", "success");
+      } catch (e) { toast(e.message, "error"); }
+      file.value = "";
+    } });
+    const stats = m.stats;
+    return h("div", {},
+      h("div", { class: "page-head" }, h("a", { class: "btn ghost", href: "#/members" }, "← Alle"), h("h2", {}, "Profil"),
+        !mine ? h("button", { class: "btn", onClick: () => { store.selectMember(m.id); toast(`Du bist jetzt ${m.name}`); draw(); } }, "Das bin ich") : h("span", { class: "chip gold" }, "Dein Profil")),
+      h("div", { class: "card gold" },
+        h("div", { class: "profile-head" },
+          h("div", { style: { position: "relative" }, onClick: () => file.click(), title: "Profilbild ändern" }, avatar(m, "xl"),
+            h("span", { class: "chip gold", style: { position: "absolute", bottom: "-4px", left: "50%", transform: "translateX(-50%)", cursor: "pointer" } }, "📷")),
+          file,
+          h("div", { class: "grow" },
+            h("div", { class: "row wrap" }, h("h3", { style: { fontSize: "22px" } }, m.name), h("span", { class: "level-badge lg" }, m.level)),
+            h("div", { class: "rank", style: { fontFamily: "var(--display)", color: "var(--gold)", letterSpacing: ".12em", textTransform: "uppercase", fontSize: "13px" } }, m.rank),
+            m.motto ? h("div", { class: "muted", style: { fontStyle: "italic", marginTop: "4px" } }, `„${m.motto}“`) : null,
+            h("div", { style: { marginTop: "10px" } },
+              h("div", { class: "row between small muted" }, h("span", {}, `${m.xp} XP`), h("span", {}, `Level ${m.level + 1} bei ${m.xpForNextLevel} XP`)),
+              h("div", { class: "xp-bar", style: { height: "12px" } }, h("i", { style: { width: `${Math.round(m.progress * 100)}%` } }))),
+            h("div", { class: "row wrap", style: { marginTop: "10px" } },
+              h("button", { class: "btn sm", onClick: () => editMember(m) }, "✎ Bearbeiten"),
+              h("button", { class: "btn sm", onClick: () => file.click() }, "📷 Profilbild"),
+              h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Profil löschen?", `${m.name} wird entfernt. Beiträge bleiben erhalten.`)) { await api.del(`/api/members/${m.id}`); if (mine) store.selectMember(null); location.hash = "#/members"; } } }, "Löschen"),
+            ),
+          ),
+        ),
+      ),
+      h("div", { class: "card" }, h("h3", {}, "Statistik"),
+        h("div", { class: "stat-grid", style: { marginTop: "10px" } },
+          stat(stats.gamesPlayed, "Runden gespielt"), stat(stats.attendanceDays, "LAN-Tage"), stat(stats.forumPosts, "Beiträge"),
+          stat(stats.comments, "Kommentare"), stat(stats.suggestions, "Vorschläge"), stat(stats.equipmentBrought, "Mitgebracht"), stat(stats.expensesPaid, "Einkäufe"),
+        ),
+        stats.favoriteGame ? h("div", { class: "small muted", style: { marginTop: "10px" } }, "Lieblingsspiel: ", h("strong", { class: "gold" }, stats.favoriteGame)) : null,
+        h("div", { class: "small muted", style: { marginTop: "6px" } }, `Mitglied seit ${fmtDate(m.createdAt, { hour: undefined, minute: undefined })}`)),
+      h("div", { class: "card" }, h("h3", {}, "XP-Protokoll"), h("div", { style: { marginTop: "8px" } }, log)),
+      h("div", { class: "card" }, h("h3", {}, "Ränge der Bruderschaft"),
+        h("div", { class: "small muted", style: { marginTop: "6px" } }, "Novize (1) · Laienbruder (3) · Bruder (5) · Mönch (8) · Prior (11) · Abt (15) · Erzabt (20) · Großmeister (26) · Binärer Erleuchteter (33)"),
+        h("div", { class: "small muted", style: { marginTop: "6px" } }, "XP: Runde gespielt +50 · LAN-Tag +30 · Vorschlag übernommen +40 · Ausrüstung mitgebracht +25 · Spiel hinzugefügt +20 · Vorschlag +15 · Einkauf +15 · Beitrag +10 · Kommentar/Abstimmung +5")),
+    );
+  };
+
+  const stat = (v, l) => h("div", { class: "stat" }, h("div", { class: "v" }, String(v)), h("div", { class: "l" }, l));
+
+  mount(main, content);
+  draw();
+  const offs = [on("members", draw), on("me", draw)];
+  return () => offs.forEach(f => f());
+}
+
+function editMember(m) {
+  const name = input({ value: m.name, maxlength: 40 });
+  const motto = input({ value: m.motto, placeholder: "Dein Schlachtruf", maxlength: 80 });
+  let color = m.color;
+  const colors = h("div", { class: "colors" });
+  const drawColors = () => mount(colors, COLORS.map(c => h("i", { class: c.toUpperCase() === color.toUpperCase() ? "on" : "", style: { background: c }, onClick: () => { color = c; drawColors(); } })));
+  drawColors();
+  modal({
+    title: "Profil bearbeiten",
+    body: h("div", {}, field("Name", name), field("Motto", motto), field("Farbe", colors)),
+    buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
+      if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
+      await api.put(`/api/members/${m.id}`, { name: name.value.trim(), motto: motto.value.trim(), color });
+      toast("Gespeichert", "success");
+    } }],
+  });
+}

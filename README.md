@@ -1,0 +1,94 @@
+# BINARY BROTHERHOOD – LAN-Party-App
+
+Android-App, die auf dem Host-Smartphone einen lokalen Server startet. Alle Teilnehmer im selben WLAN
+öffnen die App im Browser (`http://<IP-des-Hosts>:8080`). Alle Daten liegen ausschließlich in der
+SQLite-Datenbank auf dem Host-Handy; Änderungen werden per WebSocket sofort an alle Geräte verteilt.
+Keine Cloud, keine Konten, keine Kosten.
+
+## Funktionen
+
+| Reiter | Inhalt |
+|---|---|
+| **Spiele** | Gemeinsame Spieleliste mit Steam-Suche (automatisch, manuell korrigierbar), Beschreibung, Bild, Spieleranzahl. Markierung „für nächste Runde“, Reiter *Läuft gerade* und *Historie* (pro LAN-Ausgabe, mit Teilnehmern). |
+| **Glücksrad** | Echtes Canvas-Rad mit farbigen Segmenten, Beschleunigung/Abbremsen, Tick-Sound, Zeiger, Gewinner-Highlight und Konfetti. Die Drehung wird vom Server entschieden und läuft auf **allen Geräten synchron** ab. Filter: nur markierte Spiele, bereits gespielte ausschließen. Alternative **Abstimmung** mit Live-Zwischenstand. |
+| **Vorschläge** | Getrennt für *diese LAN* und *nächstes Jahr*. Up-/Downvotes, Kommentare, Übernahme in die Spieleliste. Beim Anlegen der nächsten LAN-Party werden „nächstes Jahr“-Vorschläge automatisch übernommen. |
+| **Mitglieder** | Profile mit Name, Motto, Farbe, Profilbild (Upload vom Handy, wird clientseitig verkleinert), Statistik, XP, Level und Rang (Novize … Binärer Erleuchteter), XP-Protokoll. |
+| **Forum** | Beiträge, Kommentare, angepinnte organisatorische Hinweise, Avatar + Name + Zeitstempel. |
+| **Kosten** | Splitwise-artig: Anwesenheitstage pro Mitglied, Einkäufe (ganze LAN gewichtet nach Anwesenheit, oder nur ein Tag, oder individuelle Teilnehmer), Salden, „Wer schuldet wem“ mit minimalen Transfers, Ausgleich als bezahlt markieren. |
+| **Ausrüstung** | Kategorisierte Liste (Switch, Beamer, Kabel, Getränke …), Zusagen „Ich bring's“, erledigt-Haken, offene Gegenstände, Vorlage aus der letzten LAN inklusive vorausgefüllter Zusagen. |
+| **LAN-Party** | Ausgaben verwalten (Name, Jahr, Start, Dauer), neue Ausgabe anlegen, Host-Adresse, verbundene Geräte. |
+
+### XP-System
+
+| Aktion | XP |
+|---|---|
+| Runde gespielt (Teilnahme) | 50 |
+| Vorschlag übernommen | 40 |
+| Anwesenheitstag | 30 |
+| Ausrüstung mitgebracht | 25 |
+| Spiel hinzugefügt | 20 |
+| Vorschlag / Einkauf vorgestreckt | 15 |
+| Forum-Beitrag | 10 |
+| Kommentar / Abstimmung | 5 |
+
+Level-Schwelle: `50 · (n−1) · n` XP. Ränge: Novize (1), Laienbruder (3), Bruder (5), Mönch (8), Prior (11), Abt (15), Erzabt (20), Großmeister (26), Binärer Erleuchteter (33).
+
+## Bauen und installieren
+
+Voraussetzungen: Android Studio (Ladybug oder neuer) bzw. JDK 17+ und Android SDK 35.
+
+```bash
+./gradlew :app:assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
+```
+
+Oder das Projekt in Android Studio öffnen und auf das Host-Handy ausführen. Mindest-Android: 8.0 (API 26).
+
+## Benutzung
+
+1. App auf dem Host-Handy starten. Der Server läuft als Vordergrund-Dienst (Benachrichtigung), WLAN und CPU werden wach gehalten.
+2. Oben rechts auf das Teilen-Symbol tippen: QR-Code und Adresse (z. B. `http://192.168.0.42:8080`) erscheinen.
+3. Alle anderen scannen den QR-Code oder tippen die Adresse im Browser ein und wählen bzw. erstellen ihr Profil.
+4. Der Host nutzt dieselbe Web-Oberfläche in der App.
+
+Tipp: Im Browser „Zum Startbildschirm hinzufügen“ gibt ein App-Gefühl. Ohne WLAN-Router funktioniert auch der Hotspot des Host-Handys.
+
+Die Steam-Suche benötigt Internet auf dem Host-Handy (öffentliche Steam-Store-API, kein Key). Ohne Internet bleibt die manuelle Eingabe.
+
+## Architektur
+
+```
+app/src/main/java/at/binarybrotherhood/app/
+├── data/        Room-Entities, DAOs, AppDatabase (SQLite auf dem Host)
+├── domain/      Repository (gesamte Geschäftslogik), XP-Regeln/Level, CostSplitter
+├── server/      Ktor-Server (CIO) mit REST-API + WebSocket, DTOs, Steam-Client, Foreground-Service
+├── ui/          Compose-Host-Oberfläche (Status, QR-Code, eingebettete WebView)
+└── util/        IP-Ermittlung, QR-Code-Rendering
+app/src/main/assets/web/
+├── index.html, css/app.css      Web-App (kein Build-Schritt, reines ES-Module-JavaScript)
+├── js/app.js                    Shell, Navigation, Profilwahl
+├── js/store.js                  Zustand + WebSocket mit Auto-Reconnect
+├── js/api.js, js/ui.js, js/steam.js
+└── js/views/*.js                Eine Datei pro Reiter (games, wheel, suggestions, members, forum, costs, equipment, organisation)
+```
+
+### REST-API (Auszug)
+
+Alle Endpunkte unter `/api`, JSON. Der Browser schickt die eigene Mitglieds-ID im Header `X-Member-Id`.
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| GET | `/bootstrap` | aktuelle LAN-Ausgabe, alle Ausgaben, Mitglieder |
+| GET/POST/PUT/DELETE | `/members`, `/members/{id}` | Profile; `POST /members/{id}/avatar` (Bild-Body), `GET /members/{id}/xp` |
+| GET/POST/PUT/DELETE | `/games`, `/games/{id}` | Spiele; `POST /games/{id}/select` |
+| GET/POST/PUT/DELETE | `/sessions` | Runden; `POST /sessions/{id}/end` |
+| POST | `/wheel/spin` | Server wählt Gewinner und sendet den Spin an alle (`GET /wheel/state` für Nachzügler) |
+| GET/POST | `/polls/current`, `/polls`, `/polls/{id}/vote`, `/polls/{id}/close` | Abstimmung |
+| … | `/suggestions`, `/forum`, `/events`, `/costs`, `/equipment`, `/steam/search?q=` | siehe `server/LanServer.kt` |
+
+WebSocket `/ws`: Nachrichten `{"type":"change","topic":"games"|"members"|…}`; der Spin wird als `topic: "wheel"` mit Nutzlast verteilt.
+
+## Daten sichern
+
+Die Datenbank liegt unter `/data/data/at.binarybrotherhood.app/databases/binary_brotherhood.db`, Profilbilder unter `files/avatars/`.
+Beides ist in das Android-Backup eingeschlossen (`backup_rules.xml`).
