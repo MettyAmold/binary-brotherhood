@@ -22,6 +22,17 @@ export const store = {
 
   member(id) { return this.members.find(m => m.id === Number(id)) || null; },
 
+  /** Heutiger LAN-Tag (1-basiert) der aktuellen Ausgabe oder null, wenn heute kein LAN-Tag ist. */
+  currentDay() {
+    const ev = this.event;
+    if (!ev || !ev.startDate) return null;
+    const start = new Date(ev.startDate + "T00:00:00");
+    if (isNaN(start)) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = Math.round((today - start) / 86400000) + 1;
+    return day >= 1 && day <= ev.days ? day : null;
+  },
+
   /** Prüft das gespeicherte Token. Liefert true, wenn eine gültige Sitzung besteht. */
   async loadSession() {
     if (!getToken()) { this.me = null; return false; }

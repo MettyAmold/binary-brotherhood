@@ -153,24 +153,55 @@ export function editGame(g) {
   });
 }
 
+/**
+ * Teilnehmerauswahl: standardmäßig nur, wer für den heutigen LAN-Tag als anwesend eingetragen ist
+ * (Kosten → Anwesenheit). Fehlt die Eintragung oder ist heute kein LAN-Tag, werden alle gezeigt.
+ * Liefert { el, ids() }.
+ */
+async function participantPicker(preselected) {
+  let attendance = {};
+  try { attendance = (await api.get("/api/costs", { silent: true })).attendance || {}; } catch { /* dann alle */ }
+  const day = store.currentDay();
+  const present = day ? store.members.filter(m => (attendance[m.id] || []).includes(day)) : [];
+  const pre = preselected ? new Set(preselected) : null;
+  let showAll = !present.length;
+  const checks = store.members.map(m => ({ m, present: present.includes(m), box: h("input", { type: "checkbox", checked: pre ? pre.has(m.id) : present.includes(m) || !present.length }) }));
+  const list = h("div", { class: "pick-list" });
+  const hint = h("div", { class: "small muted", style: { marginBottom: "6px" } });
+  const toggle = h("button", { class: "btn sm ghost", onClick: () => { showAll = !showAll; draw(); } });
+  const draw = () => {
+    const visible = checks.filter(c => showAll || c.present || (pre && pre.has(c.m.id)));
+    mount(list, visible.map(({ m, box, present: isP }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name), isP ? h("span", { class: "chip green" }, "heute da") : null)));
+    hint.textContent = !day ? "Heute ist kein LAN-Tag – alle Mitglieder werden angezeigt."
+      : !present.length ? `Für Tag ${day} ist noch niemand als anwesend eingetragen (Kosten → Anwesenheit) – alle werden angezeigt.`
+      : showAll ? `Alle Mitglieder; ${present.length} sind für Tag ${day} als anwesend eingetragen.` : `Nur die ${present.length} für Tag ${day} eingetragenen Mitglieder.`;
+    toggle.textContent = showAll ? "Nur Anwesende" : "Alle Mitglieder zeigen";
+    toggle.classList.toggle("hidden", !present.length);
+  };
+  draw();
+  const el = h("div", {}, hint,
+    h("div", { class: "row wrap", style: { marginBottom: "8px" } },
+      h("button", { class: "btn sm ghost", onClick: () => checks.forEach(c => { if (showAll || c.present) c.box.checked = true; }) }, "Alle"),
+      h("button", { class: "btn sm ghost", onClick: () => checks.forEach(c => c.box.checked = false) }, "Keiner"), toggle),
+    list);
+  return { el, ids: () => checks.filter(c => c.box.checked).map(c => c.m.id) };
+}
+
 /** Dialog: Spiel starten mit Teilnehmerauswahl. */
-export function startSession(game, chosenBy = "manual") {
-  const checks = store.members.map(m => ({ m, box: h("input", { type: "checkbox", checked: true }) }));
+export async function startSession(game, chosenBy = "manual") {
+  const picker = await participantPicker(null);
   const note = textarea({ placeholder: "Notiz (optional), z. B. Ergebnis oder Modus", style: { minHeight: "60px" } });
   modal({
     title: `„${game.name}“ starten`,
     body: h("div", {},
       h("p", { class: "muted small" }, "Wer spielt mit? Jeder Teilnehmer bekommt XP für die Runde."),
-      h("div", { class: "row wrap", style: { marginBottom: "8px" } },
-        h("button", { class: "btn sm ghost", onClick: () => checks.forEach(c => c.box.checked = true) }, "Alle"),
-        h("button", { class: "btn sm ghost", onClick: () => checks.forEach(c => c.box.checked = false) }, "Keiner")),
-      h("div", { class: "pick-list" }, checks.map(({ m, box }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name)))),
+      picker.el,
       h("div", { style: { marginTop: "10px" } }, field("Notiz", note)),
     ),
     buttons: [
       { label: "Abbrechen" },
       { label: "▶ Los geht's", class: "primary", onClick: async () => {
-        await api.post("/api/sessions", { gameId: game.id, participantIds: checks.filter(c => c.box.checked).map(c => c.m.id), chosenBy, note: note.value });
+        await api.post("/api/sessions", { gameId: game.id, participantIds: picker.ids(), chosenBy, note: note.value });
         toast(`${game.name} läuft!`, "success");
         location.hash = "#/games/running";
       } },
@@ -178,18 +209,14 @@ export function startSession(game, chosenBy = "manual") {
   });
 }
 
-function editSession(s) {
-  const ids = new Set(s.participants.map(p => p.id));
-  const checks = store.members.map(m => ({ m, box: h("input", { type: "checkbox", checked: ids.has(m.id) }) }));
+async function editSession(s) {
+  const picker = await participantPicker(s.participants.map(p => p.id));
   const note = textarea({ value: s.note, style: { minHeight: "60px" } });
   modal({
     title: `Teilnehmer: ${s.gameName}`,
-    body: h("div", {},
-      h("div", { class: "pick-list" }, checks.map(({ m, box }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name)))),
-      h("div", { style: { marginTop: "10px" } }, field("Notiz", note)),
-    ),
+    body: h("div", {}, picker.el, h("div", { style: { marginTop: "10px" } }, field("Notiz", note))),
     buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
-      await api.put(`/api/sessions/${s.id}`, { participantIds: checks.filter(c => c.box.checked).map(c => c.m.id), note: note.value });
+      await api.put(`/api/sessions/${s.id}`, { participantIds: picker.ids(), note: note.value });
     } }],
   });
 }
