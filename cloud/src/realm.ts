@@ -5,29 +5,22 @@ import { Db, Env } from "./db";
 import { handleApi, RealmInfo } from "./api";
 import { resolveMember } from "./auth";
 import type { AuthInfo } from "./accounts";
-import { linkUsers, joinRealm, applyProfile } from "./link";
+import { joinRealm, applyProfile } from "./link";
 import { Repo } from "./repo";
-import { toBytes } from "./repo";
 import s0001 from "../realm-schema/0001_init.sql";
 import s0002 from "../realm-schema/0002_sounds.sql";
 import s0003 from "../realm-schema/0003_media.sql";
 import s0004 from "../realm-schema/0004_tournaments.sql";
 import s0005 from "../realm-schema/0005_accounts.sql";
+import s0006 from "../realm-schema/0006_drop_logins.sql";
 
 /** Schema-Stände je Realm; neue Änderungen hinten anhängen, nie bestehende ändern. */
-const SCHEMA = [s0001, s0002, s0003, s0004, s0005];
-
-/** Tabellen, die beim ersten Realm aus der alten D1-Datenbank übernommen werden. */
-const LEGACY_TABLES = ["settings", "changes", "events", "members", "auth_tokens", "games", "shares", "sessions", "session_participants",
-  "suggestions", "suggestion_votes", "suggestion_comments", "forum_posts", "forum_comments", "attendance", "expenses", "expense_shares",
-  "payments", "equipment", "polls", "poll_votes", "xp_log", "sounds", "media", "tournaments", "tournament_teams", "tournament_matches"];
-const BLOB_TABLES = new Set(["members", "sounds", "media"]);
+const SCHEMA = [s0001, s0002, s0003, s0004, s0005, s0006];
 
 interface Attachment { id: number | null; name: string }
 
 export class Realm extends DurableObject<Env> {
   private db: Db;
-  private legacyChecked = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -47,40 +40,10 @@ export class Realm extends DurableObject<Env> {
     }
   }
 
-  /** Erster Realm: einmalig alles aus der alten, gemeinsamen D1-Datenbank holen (inkl. Logins). */
-  private async importLegacy(realm: RealmInfo & { legacy?: boolean }) {
-    if (this.legacyChecked || !realm.legacy) return;
-    if (await this.db.setting("legacyImported")) { this.legacyChecked = true; return; }
-    const hasData = await this.db.first("SELECT id FROM members LIMIT 1");
-    if (!hasData) {
-      for (const table of LEGACY_TABLES) {
-        let offset = 0;
-        const page = BLOB_TABLES.has(table) ? 5 : 500; // Medien bis 2 MB je Zeile
-        for (;;) {
-          let rows: Record<string, unknown>[];
-          try { rows = (await this.env.DB.prepare(`SELECT * FROM ${table} LIMIT ? OFFSET ?`).bind(page, offset).all()).results ?? []; }
-          catch { break; } // Tabelle gab es im Altbestand nicht
-          if (!rows.length) break;
-          const stmts = rows.map(r => {
-            const cols = Object.keys(r);
-            const vals = cols.map(c => (Array.isArray(r[c]) ? toBytes(r[c] as number[]) : r[c]));
-            return { sql: `INSERT OR REPLACE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, params: vals };
-          });
-          await this.db.batch(stmts);
-          offset += rows.length;
-          if (rows.length < page) break;
-        }
-      }
-    }
-    await this.db.setSetting("legacyImported", String(Date.now()));
-    this.legacyChecked = true;
-  }
-
   async fetch(req: Request): Promise<Response> {
-    const realm = JSON.parse(decodeURIComponent(req.headers.get("X-Realm-Info") ?? "%7B%7D")) as RealmInfo & { legacy?: boolean };
+    const realm = JSON.parse(decodeURIComponent(req.headers.get("X-Realm-Info") ?? "%7B%7D")) as RealmInfo;
     const authHeader = req.headers.get("X-Auth");
     const auth = authHeader ? (JSON.parse(decodeURIComponent(authHeader)) as AuthInfo) : null;
-    await this.ctx.blockConcurrencyWhile(() => this.importLegacy(realm));
     const url = new URL(req.url);
     if (url.pathname.startsWith("/internal/")) {
       try { return Response.json(await this.internal(url.pathname.slice(10), await req.json().catch(() => ({})), realm)); }
@@ -99,10 +62,9 @@ export class Realm extends DurableObject<Env> {
   }
 
   /** Nur vom Worker oder anderen Realms erreichbar (der Worker leitet /internal nie weiter). */
-  private async internal(op: string, body: any, realm: RealmInfo & { legacy?: boolean }) {
+  private async internal(op: string, body: any, realm: RealmInfo) {
     const changed = () => this.send(JSON.stringify({ type: "change", topic: "members", ts: Date.now() }));
     switch (op) {
-      case "link": { const r = await this.ctx.blockConcurrencyWhile(() => linkUsers(this.db, this.env, realm)); return r; }
       case "join": { const r = await joinRealm(this.db, this.env, realm, body, () => new Repo(this.db).inviteCode()); if (!r.already) changed(); return r; }
       case "profile": { if (await applyProfile(this.db, this.env, Number(body.userId))) changed(); return { ok: true }; }
       case "kick": {

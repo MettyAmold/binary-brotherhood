@@ -135,14 +135,14 @@ export async function renderForum(main) {
 
 function editPost(p) {
   const title = input({ value: p ? p.title : "", placeholder: "Titel (optional)", maxlength: 140 });
-  const body = textarea({ value: p ? p.body : "", placeholder: "Was gibt's? Links werden automatisch klickbar.", maxlength: 8000, style: { minHeight: "140px" } });
+  const body = textarea({ value: p ? p.body : "", placeholder: "Was gibt's?", maxlength: 8000, style: { minHeight: "140px" } });
   const pinned = h("input", { type: "checkbox", checked: p ? p.pinned : false });
   const pick = attachmentPicker(p ? p.media || [] : []);
   pick.bindPaste(body); pick.bindPaste(title);
   const ctx = modal({
     title: p ? "Beitrag bearbeiten" : "Neuer Beitrag",
-    body: h("div", {}, field("Titel", title), field("Text", body), field("Bilder / GIFs", pick.el, "Einfügen mit Strg+V, Hineinziehen oder Knopf. GIF-Links (z. B. von GIPHY oder Tenor) einfach ins Textfeld einfügen."),
-      h("label", { class: "check" }, pinned, h("span", {}, "📌 Organisatorischer Hinweis (bleibt oben angepinnt)"))),
+    body: h("div", {}, field("Titel", title), field("Text", body), field("Bilder / GIFs", pick.el, "Strg+V, Hineinziehen oder GIF-Link einfügen."),
+      h("label", { class: "check" }, pinned, h("span", {}, "📌 Oben anpinnen"))),
     buttons: [{ label: "Abbrechen" }, { label: p ? "Speichern" : "Veröffentlichen", class: "primary", onClick: async () => {
       if (!body.value.trim() && !pick.ids().length) { toast("Bitte einen Text schreiben oder ein Bild anhängen", "error"); return false; }
       if (pick.busy()) { toast("Bild wird noch hochgeladen …"); return false; }

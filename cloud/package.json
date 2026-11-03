@@ -2,12 +2,10 @@
   "name": "binary-brotherhood-cloud",
   "private": true,
   "version": "2.0.0",
-  "description": "BINARY BROTHERHOOD – Cloudflare Worker (API + Web-App) mit D1-Datenbank",
+  "description": "BINARY BROTHERHOOD – Cloudflare Worker mit Realms (Durable Objects) und Konten (D1)",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "node scripts/changelog.mjs && wrangler deploy",
-    "migrate:local": "wrangler d1 migrations apply binary-brotherhood --local",
-    "migrate:remote": "wrangler d1 migrations apply binary-brotherhood --remote",
     "typecheck": "tsc --noEmit",
     "changelog": "node scripts/changelog.mjs",
     "test": "node test/tournament.test.ts"

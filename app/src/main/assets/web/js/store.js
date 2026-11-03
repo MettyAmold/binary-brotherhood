@@ -1,4 +1,4 @@
-// Globaler Zustand: aktuelles Mitglied, Mitgliederliste, LAN-Ausgabe, Live-Verbindung.
+// Globaler Zustand: Konto, Realm, aktuelles Mitglied, Mitglieder, LAN-Ausgabe, Live-Verbindung.
 import { api, getToken, setToken, currentRealm } from "./api.js";
 import { setSoundUrls } from "./notify.js";
 import { setAvatarUrls } from "./ui.js";
@@ -7,14 +7,11 @@ const listeners = new Map(); // topic -> Set<fn>
 
 export const store = {
   me: null,
-  isHost: false,
   isAdmin: false,
   /** Darf in allen Realms alles (Konten, Realms verwalten) */
   isSuperAdmin: false,
   /** Konto: { user, realms, otherRealms } */
   account: null,
-  /** "cloud" (Cloudflare) oder "lan" (Host-Handy) – steuert z. B. den Freigaben-Assistenten */
-  mode: "lan",
   members: [],
   event: null,
   events: [],
@@ -60,7 +57,7 @@ export const store = {
     if (!getToken()) { this.me = null; return "noLogin"; }
     try {
       const s = await api.get("/api/auth/me", { silent: true, noAuthRedirect: true });
-      this.me = s.member; this.isHost = !!s.isHost; this.isAdmin = !!s.isAdmin; this.isSuperAdmin = !!s.isSuperAdmin;
+      this.me = s.member; this.isAdmin = !!s.isAdmin; this.isSuperAdmin = !!s.isSuperAdmin;
       return "ok";
     } catch (e) {
       if (e.status === 403) { this.me = null; return "notMember"; }
@@ -74,14 +71,10 @@ export const store = {
     if (resp.user) { this.account = { user: resp.user, realms: resp.realms, otherRealms: resp.otherRealms }; this.isSuperAdmin = !!resp.user.isSuperAdmin; }
   },
 
-  async loadMode() {
-    try { const h = await api.get("/api/host", { silent: true, noAuthRedirect: true }); this.mode = h.mode === "cloud" ? "cloud" : "lan"; } catch { this.mode = "lan"; }
-  },
-
   async logout() {
     try { await api.post("/api/account/logout", {}, { silent: true, noAuthRedirect: true }); } catch { /* egal */ }
     setToken(null);
-    this.me = null; this.account = null; this.isHost = false; this.isAdmin = false; this.isSuperAdmin = false;
+    this.me = null; this.account = null; this.isAdmin = false; this.isSuperAdmin = false;
     emit("me");
   },
 

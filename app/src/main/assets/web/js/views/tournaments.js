@@ -1,12 +1,12 @@
 // Turniere: Liga, Swiss und K.o. mit Teams, Tabelle, Turnierbaum und Ergebniseingabe.
-import { h, mount, modal, confirmDialog, avatar, empty, toast, input, field, fmtDate } from "../ui.js";
+import { h, mount, modal, confirmDialog, avatar, empty, toast, input, field } from "../ui.js";
 import { api } from "../api.js";
 import { store, on } from "../store.js";
 
 const FORMATS = {
   league: { label: "Liga", icon: "📊", hint: "Jeder spielt gegen jeden. Sieg 3, Unentschieden 1 Punkt." },
-  swiss: { label: "Swiss", icon: "♟️", hint: "Mehrere Runden, Gegner mit ähnlichem Punktestand, keine Wiederholungen. Gut bei vielen Teams." },
-  knockout: { label: "K.o.", icon: "🏆", hint: "Turnierbaum, wer verliert, ist raus. Freilose bei ungerader Teamzahl." },
+  swiss: { label: "Swiss", icon: "♟️", hint: "Gegner mit ähnlichem Punktestand, gut bei vielen Teams." },
+  knockout: { label: "K.o.", icon: "🏆", hint: "Wer verliert, ist raus." },
 };
 const STATUS = { draft: ["Entwurf", ""], running: ["läuft", "green live"], done: ["beendet", "gold"] };
 
@@ -55,7 +55,7 @@ export async function renderTournaments(main, params) {
         t.status === "draft" ? h("button", { class: "btn", onClick: () => editTournament(t) }, "✎ Bearbeiten") : null,
         t.format === "swiss" && t.status === "running" && !roundOpen && lastRound < t.rounds ? h("button", { class: "btn primary", onClick: async () => { await api.post(`/api/tournaments/${t.id}/next-round`); toast(`Runde ${lastRound + 1} ausgelost`, "success"); } }, `🎲 Runde ${lastRound + 1} auslosen`) : null,
         h("button", { class: "btn danger", onClick: async () => { if (await confirmDialog("Turnier löschen?", `„${t.name}“ wird mit allen Ergebnissen entfernt.`)) { await api.del(`/api/tournaments/${t.id}`); location.hash = "#/tournaments"; } } }, "🗑 Turnier löschen")) : null,
-      t.status === "draft" ? h("p", { class: "small muted", style: { marginTop: "10px" } }, "Entwurf: Teams lassen sich noch ändern. Mit „Turnier starten“ wird der Spielplan erstellt.") : null,
+      t.status === "draft" ? h("p", { class: "small muted", style: { marginTop: "10px" } }, "Entwurf – Teams noch änderbar.") : null,
       t.format === "knockout" && t.status !== "draft" ? bracket(t, team) : null,
       t.format !== "knockout" && t.status !== "draft" ? table(t, team) : null,
       t.format !== "knockout" && t.status !== "draft" ? rounds(t, team) : null,
@@ -96,7 +96,7 @@ export async function renderTournaments(main, params) {
     const byRound = new Map();
     for (const m of t.matches) (byRound.get(m.round) || byRound.set(m.round, []).get(m.round)).push(m);
     return h("div", { class: "card", style: { marginTop: "12px" } }, h("h3", {}, "Spielplan"),
-      h("div", { class: "small muted" }, "Tippe auf ein Spiel, um das Ergebnis einzutragen."),
+      h("div", { class: "small muted" }, "Spiel antippen, um das Ergebnis einzutragen."),
       [...byRound.entries()].map(([r, ms]) => h("div", { style: { marginTop: "10px" } }, h("div", { class: "small muted round-title" }, `Runde ${r}`),
         h("div", { class: "match-list" }, ms.map(m => matchRow(t, m, team))))));
   };
@@ -122,7 +122,7 @@ function reportDialog(t, m, a, b) {
     body: h("div", {},
       h("div", { class: "score-entry" }, h("div", {}, h("div", { class: "small" }, a.name), sa), h("div", { class: "vs" }, ":"), h("div", {}, h("div", { class: "small" }, b.name), sb)),
       h("div", { class: "row wrap", style: { marginTop: "10px", justifyContent: "center" } }, h("span", { class: "small muted" }, "Schnell:"), quick(1, 0), quick(0, 1), t.format !== "knockout" ? quick(1, 1) : null, quick(2, 1), quick(1, 2)),
-      t.format === "knockout" ? h("p", { class: "small muted", style: { marginTop: "8px" } }, "Im K.o. gibt es kein Unentschieden, der Sieger rückt automatisch weiter.") : null),
+      t.format === "knockout" ? h("p", { class: "small muted", style: { marginTop: "8px" } }, "Kein Unentschieden im K.o.") : null),
     buttons: [
       m.status === "done" ? { label: "Ergebnis löschen", class: "danger", onClick: async () => { await api.put(`/api/tournaments/${t.id}/matches/${m.id}`, { scoreA: null, scoreB: null }); } } : null,
       { label: "Abbrechen" },

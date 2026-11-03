@@ -3,7 +3,7 @@ import { Env } from "./db";
 import type { RealmInfo } from "./api";
 import type { AuthInfo } from "./accounts";
 
-export interface RealmRow { slug: string; name: string; kind: string; createdAt: number; legacy: number; linked?: number }
+export interface RealmRow { slug: string; name: string; kind: string; createdAt: number; legacy: number }
 export const publicRealm = (r: RealmRow): RealmInfo => ({ slug: r.slug, name: r.name, kind: r.kind === "online" ? "online" : "lan" });
 export const realmRow = (env: Env, slug: string) => env.DB.prepare("SELECT * FROM realms WHERE slug = ?").bind(slug).first<RealmRow>();
 

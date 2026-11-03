@@ -5,9 +5,11 @@ import { Accounts, AuthInfo, UserRow, userDto } from "./accounts";
 import { RealmRow, publicRealm, realmRow, realmHeaders, realmStub, callRealm } from "./realmClient";
 import { HttpError, BadRequest, Forbidden, NotFound, Unauthorized } from "./logic";
 import { toBytes } from "./repo";
+import realmsSql from "../migrations/0005_realms.sql";
 import accountsSql from "../migrations/0006_accounts.sql";
 export { Realm } from "./realm";
 
+/** Ohne Angabe (z. B. ältere Freigabe-Skripte) gilt der erste Realm. */
 const DEFAULT_REALM = "binary-brotherhood";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
@@ -23,30 +25,20 @@ function realmSlug(req: Request, url: URL): string {
   return (req.headers.get("X-Realm") || url.searchParams.get("realm") || (fromCookie && decodeURIComponent(fromCookie)) || DEFAULT_REALM).toLowerCase();
 }
 
-/**
- * D1-Schema selbst anlegen (die D1-Migrationen lassen sich mit dem vorhandenen Token nicht remote ausführen) und
- * Realm-Profile einmalig mit Konten verknüpfen. Idempotent, einmal je Isolate.
- */
+/** D1-Schema beim ersten Aufruf je Isolate anlegen (idempotent; `wrangler d1 migrations apply --remote` geht mit dem Token nicht). */
 let ready: Promise<unknown> | null = null;
 const ensureReady = (env: Env) => (ready ??= (async () => {
-  await env.DB.batch([
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS realms (slug TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'lan', createdAt INTEGER NOT NULL, legacy INTEGER NOT NULL DEFAULT 0)"),
-    env.DB.prepare("INSERT OR IGNORE INTO realms (slug, name, kind, createdAt, legacy) VALUES (?, 'BINARY BROTHERHOOD', 'lan', 0, 1)").bind(DEFAULT_REALM),
-  ]);
-  for (const stmt of accountsSql.replace(/--.*$/gm, "").split(";").map(x => x.trim()).filter(Boolean)) await env.DB.prepare(stmt).run();
-  try { await env.DB.prepare("ALTER TABLE realms ADD COLUMN linked INTEGER NOT NULL DEFAULT 0").run(); } catch { /* gibt es schon */ }
-  const pending = (await env.DB.prepare("SELECT slug FROM realms WHERE linked = 0").all<{ slug: string }>()).results ?? [];
-  for (const r of pending) {
-    await callRealm(env, r.slug, "link");
-    await env.DB.prepare("UPDATE realms SET linked = 1 WHERE slug = ?").bind(r.slug).run();
-  }
+  for (const file of [realmsSql, accountsSql])
+    for (const stmt of file.replace(/--.*$/gm, "").split(";").map(x => x.trim()).filter(Boolean)) await env.DB.prepare(stmt).run();
 })().catch(e => { ready = null; throw e; }));
+
+const allRealms = async (env: Env) => (await env.DB.prepare("SELECT * FROM realms ORDER BY legacy DESC, name COLLATE NOCASE").all<RealmRow>()).results ?? [];
 
 const authOf = (u: UserRow): AuthInfo => ({ userId: u.id, name: u.name, superAdmin: u.isSuperAdmin === 1 });
 
 async function accountMe(acc: Accounts, env: Env, u: UserRow) {
   const mine = await acc.realmsOf(u.id);
-  const all = (await env.DB.prepare("SELECT * FROM realms ORDER BY legacy DESC, name COLLATE NOCASE").all<RealmRow>()).results ?? [];
+  const all = await allRealms(env);
   const mineSlugs = new Set(mine.map(r => r.slug));
   return { user: userDto(u), realms: all.filter(r => mineSlugs.has(r.slug)).map(publicRealm), otherRealms: all.filter(r => !mineSlugs.has(r.slug)).map(publicRealm) };
 }
@@ -90,10 +82,7 @@ route("POST", "/api/account/password", async (req, env, url) => {
 });
 
 // ---------------- Realms
-route("GET", "/api/realms", async (_req, env) => {
-  const rows = (await env.DB.prepare("SELECT * FROM realms ORDER BY legacy DESC, name COLLATE NOCASE").all<RealmRow>()).results ?? [];
-  return rows.map(publicRealm);
-});
+route("GET", "/api/realms", async (_req, env) => (await allRealms(env)).map(publicRealm));
 route("POST", "/api/realms", async (req, env, url) => {
   const s = await requireUser(req, env, url);
   const r = await body<{ name?: string; kind?: string }>(req);
@@ -104,7 +93,7 @@ route("POST", "/api/realms", async (req, env, url) => {
   const base = slugify(name);
   let slug = base;
   for (let i = 2; await realmRow(env, slug); i++) slug = `${base}-${i}`;
-  await env.DB.prepare("INSERT INTO realms (slug, name, kind, createdAt, legacy, linked) VALUES (?, ?, ?, ?, 0, 1)").bind(slug, name, kind, Date.now()).run();
+  await env.DB.prepare("INSERT INTO realms (slug, name, kind, createdAt, legacy) VALUES (?, ?, ?, ?, 0)").bind(slug, name, kind, Date.now()).run();
   await callRealm(env, slug, "join", { userId: s.user.id, bypass: true, admin: true });
   return { slug, name, kind };
 });
@@ -124,7 +113,7 @@ route("GET", "/api/super/overview", async (req, env, url) => {
   await requireSuper(req, env, url);
   const users = (await env.DB.prepare("SELECT id, name, password, color, motto, avatarUpdatedAt, isSuperAdmin, createdAt FROM users ORDER BY name COLLATE NOCASE").all<UserRow>()).results ?? [];
   const links = (await env.DB.prepare("SELECT realmSlug, userId FROM realm_members").all<{ realmSlug: string; userId: number }>()).results ?? [];
-  const realms = (await env.DB.prepare("SELECT * FROM realms ORDER BY legacy DESC, name COLLATE NOCASE").all<RealmRow>()).results ?? [];
+  const realms = await allRealms(env);
   return {
     users: users.map(u => ({ ...userDto(u), createdAt: u.createdAt, realms: links.filter(l => l.userId === u.id).map(l => l.realmSlug) })),
     realms: realms.map(r => ({ ...publicRealm(r), legacy: r.legacy === 1, createdAt: r.createdAt, members: links.filter(l => l.realmSlug === r.slug).length })),

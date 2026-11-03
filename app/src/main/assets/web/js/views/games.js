@@ -40,7 +40,7 @@ export async function renderGames(main, params) {
 
   const listView = (list) => {
     if (!list.length && query.trim()) return empty("🔍", `Kein Spiel passt zu „${query.trim()}“.`, h("button", { class: "btn", onClick: () => { query = ""; search.value = ""; draw(); } }, "Suche leeren"));
-    if (!list.length) return empty("🎮", tab === "selected" ? "Noch kein Spiel für die nächste Runde markiert. Tippe auf den Stern bei einem Spiel." : "Noch keine Spiele. Füge das erste hinzu!",
+    if (!list.length) return empty("🎮", tab === "selected" ? "Kein Spiel markiert." : "Noch keine Spiele. Füge das erste hinzu!",
       h("button", { class: "btn primary", onClick: () => editGame() }, "+ Spiel hinzufügen"));
     return h("div", { class: "grid" }, list.map(gameCard));
   };
@@ -79,7 +79,7 @@ export async function renderGames(main, params) {
   );
 
   const runningView = (running) => {
-    if (!running.length) return empty("⏸", "Gerade läuft nichts. Starte ein Spiel aus der Liste oder dreh am Glücksrad!",
+    if (!running.length) return empty("⏸", "Gerade läuft nichts.",
       h("a", { class: "btn primary", href: "#/wheel" }, "Zum Glücksrad"));
     return h("div", { class: "stack" }, running.map(s => h("div", { class: "card gold session" },
       h("div", { class: "thumb", style: s.imageUrl ? { backgroundImage: `url("${s.imageUrl}")` } : {} }),
@@ -126,7 +126,7 @@ export async function renderGames(main, params) {
 
   mount(main,
     h("div", { class: "page-head" }, h("h2", {}, "Spiele"),
-      h("button", { class: "btn", onClick: sharesDialog }, "💾 Freigaben"),
+      store.lan ? h("button", { class: "btn", onClick: sharesDialog }, "💾 Freigaben") : null,
       h("button", { class: "btn primary", onClick: () => editGame() }, "+ Spiel")),
     tabsEl, search, content,
     h("button", { class: "btn primary fab", onClick: () => editGame(), "aria-label": "Spiel hinzufügen" }, "+"),
@@ -180,11 +180,11 @@ async function participantPicker(preselected) {
   const draw = () => {
     const visible = checks.filter(c => showAll || c.present || (pre && pre.has(c.m.id)));
     mount(list, visible.map(({ m, box, present: isP }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name), isP ? h("span", { class: "chip green" }, store.lan ? "heute da" : "online") : null)));
-    hint.textContent = !store.lan ? (!present.length ? "Gerade ist niemand online – alle Mitglieder werden angezeigt."
-        : showAll ? `Alle Mitglieder; ${present.length} sind gerade online.` : `Nur die ${present.length} Mitglieder, die gerade online sind.`)
-      : !day ? "Heute ist kein LAN-Tag – alle Mitglieder werden angezeigt."
-      : !present.length ? `Für Tag ${day} ist noch niemand als anwesend eingetragen (Kosten → Anwesenheit) – alle werden angezeigt.`
-      : showAll ? `Alle Mitglieder; ${present.length} sind für Tag ${day} als anwesend eingetragen.` : `Nur die ${present.length} für Tag ${day} eingetragenen Mitglieder.`;
+    hint.textContent = !store.lan ? (!present.length ? "Niemand online – alle angezeigt."
+        : showAll ? `Alle · ${present.length} online` : `${present.length} online`)
+      : !day ? "Heute kein LAN-Tag – alle angezeigt."
+      : !present.length ? `Für Tag ${day} niemand eingetragen – alle angezeigt.`
+      : showAll ? `Alle · ${present.length} heute da` : `${present.length} heute da`;
     toggle.textContent = showAll ? "Nur Anwesende" : "Alle Mitglieder zeigen";
     toggle.classList.toggle("hidden", !present.length);
   };
@@ -204,7 +204,7 @@ export async function startSession(game, chosenBy = "manual") {
   modal({
     title: `„${game.name}“ starten`,
     body: h("div", {},
-      h("p", { class: "muted small" }, "Wer spielt mit? Jeder Teilnehmer bekommt XP für die Runde."),
+      h("p", { class: "muted small" }, "Wer spielt mit?"),
       picker.el,
       h("div", { style: { marginTop: "10px" } }, field("Notiz", note)),
     ),

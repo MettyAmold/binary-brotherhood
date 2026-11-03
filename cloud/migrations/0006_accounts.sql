@@ -1,4 +1,4 @@
--- Konten gelten für alle Realms; XP, Level und Realm-Admin-Rechte bleiben in der Datenbank des Realms.
+-- Konten gelten für alle Realms. XP, Level und Realm-Admin-Rechte liegen im Realm.
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE, password TEXT NOT NULL DEFAULT '',
   color TEXT NOT NULL DEFAULT '#C9A24D', motto TEXT NOT NULL DEFAULT '', avatar BLOB, avatarUpdatedAt INTEGER,

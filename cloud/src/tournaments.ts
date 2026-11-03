@@ -1,6 +1,6 @@
 // Turniere: Anlegen, Starten, Ergebnisse, nächste Swiss-Runde, Sieger. Nutzt die reine Logik aus tournamentLogic.ts.
 import { Db, now } from "./db";
-import { BadRequest, NotFound, Forbidden, xpAmount } from "./logic";
+import { BadRequest, NotFound, xpAmount } from "./logic";
 import { Format, MatchRow, roundRobin, standings, swissPairing, swissRounds, knockoutBracket, nextSlot, roundName } from "./tournamentLogic";
 
 interface TRow { id: number; eventId: number; name: string; gameId: number | null; format: Format; status: "draft" | "running" | "done"; rounds: number; createdBy: number | null; winnerTeamId: number | null; createdAt: number }

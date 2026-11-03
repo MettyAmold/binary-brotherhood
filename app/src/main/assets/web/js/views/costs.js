@@ -44,9 +44,9 @@ export async function renderCosts(main, params) {
               await api.post("/api/costs/payments", { fromId: t.fromId, toId: t.toId, amountCents: t.cents }); toast("Ausgleich gespeichert", "success");
             }
           } }, "✓ Bezahlt"),
-        ))) : h("div", { class: "muted small", style: { marginTop: "8px" } }, data.expenses.length ? "Alles ausgeglichen – niemand schuldet jemandem etwas. 🎉" : "Noch keine Einkäufe eingetragen.")),
+        ))) : h("div", { class: "muted small", style: { marginTop: "8px" } }, data.expenses.length ? "Alles ausgeglichen. 🎉" : "Noch keine Einkäufe eingetragen.")),
       h("div", { class: "card" }, h("h3", {}, "Salden"),
-        h("p", { class: "small muted" }, "Grün = bekommt Geld zurück, Rot = schuldet noch. Berücksichtigt Anwesenheitstage und bereits erfolgte Ausgleichszahlungen."),
+        h("p", { class: "small muted" }, "Grün: bekommt Geld · Rot: schuldet"),
         withActivity.length ? withActivity.sort((a, b) => b.netCents - a.netCents).map(b => h("div", { class: "balance" },
           av(b.memberId), h("div", { style: { minWidth: "90px" } }, h("div", { class: "ellipsis" }, name(b.memberId)), h("div", { class: "small muted nowrap" }, `bezahlt ${fmtEuro(b.paidCents)} · Anteil ${fmtEuro(b.owedCents)}`)),
           h("div", { class: "bar" }, h("i", { class: b.netCents >= 0 ? "pos" : "neg", style: { width: `${Math.abs(b.netCents) / maxAbs * 50}%` } })),
@@ -57,7 +57,7 @@ export async function renderCosts(main, params) {
 
   // ---- Einkäufe
   const expensesView = () => h("div", { class: "stack" },
-    h("div", { class: "row" }, h("div", { class: "grow muted small" }, "Trage gemeinsame Einkäufe ein. Die Aufteilung passiert automatisch nach Anwesenheit, kann aber pro Einkauf angepasst werden."), h("button", { class: "btn primary", onClick: () => editExpense(null, data) }, "+ Einkauf")),
+    h("div", { class: "row" }, h("div", { class: "grow" }), h("button", { class: "btn primary", onClick: () => editExpense(null, data) }, "+ Einkauf")),
     data.expenses.length ? data.expenses.map(e => h("div", { class: "card" },
       h("div", { class: "expense" },
         av(e.paidById, ""),
@@ -89,13 +89,13 @@ export async function renderCosts(main, params) {
       }
     }
     return h("div", { class: "card" }, h("h3", {}, "Wer ist an welchem Tag dabei?"),
-      h("p", { class: "small muted" }, `${ev?.name ?? ""} · ${days} Tage ab ${ev?.startDate ?? ""}. Tage anpassen unter „LAN-Party“. Jeder Anwesenheitstag bringt 30 XP.`),
+      h("p", { class: "small muted" }, `${ev?.name ?? ""} · ${days} Tage ab ${ev?.startDate ?? ""} · +30 XP pro Tag`),
       h("div", { class: "scroll-x" }, grid));
   };
 
   // ---- Ausgleichszahlungen
   const paymentsView = () => h("div", { class: "stack" },
-    h("div", { class: "row" }, h("div", { class: "grow muted small" }, "Erfolgte Ausgleichszahlungen zwischen Mitgliedern."), h("button", { class: "btn", onClick: () => newPayment() }, "+ Zahlung erfassen")),
+    h("div", { class: "row" }, h("div", { class: "grow" }), h("button", { class: "btn", onClick: () => newPayment() }, "+ Zahlung erfassen")),
     data.payments.length ? h("div", { class: "card" }, data.payments.map(p => h("div", { class: "transfer", style: { border: 0, borderBottom: "1px solid var(--line)", borderRadius: 0 } },
       av(p.fromId), h("span", {}, name(p.fromId)), h("span", { class: "muted" }, "→"), av(p.toId), h("span", {}, name(p.toId)),
       h("div", { class: "grow small muted" }, fmtDate(p.createdAt)), h("span", { class: "amt" }, fmtEuro(p.amountCents)),
@@ -138,7 +138,7 @@ function editExpense(e, data) {
   modal({
     title: e ? "Einkauf bearbeiten" : "Neuer Einkauf",
     body: h("div", {}, field("Bezeichnung *", title), h("div", { class: "form-row" }, field("Betrag (€) *", amt), field("Bezahlt von", payer)), field("Betrifft", day),
-      checkbox("Teilnehmer manuell auswählen (gleichmäßig unter den Gewählten)", { checked: custom, onChange: (ev2) => { custom = ev2.target.checked; customBox.classList.toggle("hidden", !custom); } }), customBox,
+      checkbox("Teilnehmer selbst wählen", { checked: custom, onChange: (ev2) => { custom = ev2.target.checked; customBox.classList.toggle("hidden", !custom); } }), customBox,
       field("Notiz", note)),
     buttons: [{ label: "Abbrechen" }, { label: e ? "Speichern" : "Speichern", class: "primary", onClick: async () => {
       const c = parseEuro(amt.value);

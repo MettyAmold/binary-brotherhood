@@ -6,14 +6,13 @@ import { XP, xpAmount, xpLabel, levelForXp, summarizeCosts, ExpenseInput, normal
 export const toBytes = (v: ArrayBuffer | ArrayBufferView | number[]): Uint8Array =>
   v instanceof ArrayBuffer ? new Uint8Array(v) : ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v);
 
-const PALETTE = ["#C9A24D", "#D96C4F", "#4FA3D9", "#6BBF59", "#B05ED9", "#E0B04C", "#48C9B0", "#E05C8A", "#8E9BFF", "#F08A24", "#5DD39E", "#D64545"];
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 const groupBy = <T, K>(list: T[], key: (t: T) => K): Map<K, T[]> => { const m = new Map<K, T[]>(); for (const t of list) { const k = key(t); (m.get(k) ?? m.set(k, []).get(k)!).push(t); } return m; };
 const byId = <T extends { id: number }>(list: T[]) => new Map(list.map(t => [t.id, t]));
 
 // ---- Zeilentypen
 interface EventRow { id: number; name: string; year: number; startDate: string; days: number; isCurrent: number; createdAt: number }
-interface MemberRow { id: number; name: string; motto: string; color: string; hasAvatar: number; createdAt: number; password: string; isAdmin: number; avatarUpdatedAt: number | null }
+interface MemberRow { id: number; name: string; motto: string; color: string; hasAvatar: number; createdAt: number; isAdmin: number; avatarUpdatedAt: number | null }
 interface GameRow { id: number; name: string; description: string; steamUrl: string; steamAppId: number | null; imageUrl: string; players: string; addedById: number | null; selectedForNext: number; createdAt: number; sharePath: string; shareId: number | null }
 interface SessionRow { id: number; gameId: number; eventId: number; startedAt: number; endedAt: number | null; chosenBy: string; note: string }
 interface SuggestionRow { id: number; scope: string; title: string; description: string; steamUrl: string; steamAppId: number | null; imageUrl: string; authorId: number | null; adoptedGameId: number | null; createdAt: number }
@@ -25,7 +24,7 @@ interface PollRow { id: number; eventId: number; open: number; winnerGameId: num
 interface MediaRow { id: number; contentType: string; size: number; name: string; postId: number | null; commentId: number | null }
 interface ShareRow { id: number; path: string; addedById: number | null; lastScanAt: number | null; lastError: string; lastCount: number; knownFolders: string; uploadKey: string; createdAt: number }
 
-const MEMBER_COLS = "id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt";
+const MEMBER_COLS = "id, name, motto, color, hasAvatar, createdAt, isAdmin, avatarUpdatedAt";
 
 export class Repo {
   /** realm: steckt in Bild-/Medien-/Klang-URLs, damit der Browser-Cache Realms nicht vermischt. */
@@ -112,19 +111,6 @@ export class Repo {
     });
   }
   async member(id: number) { const m = (await this.members()).find(x => x.id === id); if (!m) throw new NotFound("Mitglied nicht gefunden"); return m; }
-  async authMembers() {
-    return (await this.db.all<MemberRow>(`SELECT ${MEMBER_COLS} FROM members ORDER BY name COLLATE NOCASE`))
-      .map(m => ({ id: m.id, name: m.name, color: m.color, hasAvatar: bool(m.hasAvatar), hasPassword: !!m.password, createdAt: m.avatarUpdatedAt ?? m.createdAt }));
-  }
-  async createMember(req: { name: string; motto?: string; color?: string | null }) {
-    const name = (req.name ?? "").trim();
-    if (!name) throw new BadRequest("Name fehlt");
-    if (await this.db.first("SELECT id FROM members WHERE name = ? COLLATE NOCASE", name)) throw new BadRequest("Name ist bereits vergeben");
-    const color = req.color && /^#[0-9a-fA-F]{6}$/.test(req.color) ? req.color : pick(PALETTE);
-    const count = (await this.db.first<{ n: number }>("SELECT COUNT(*) AS n FROM members"))!.n;
-    const id = await this.db.insert("INSERT INTO members (name, motto, color, createdAt, isAdmin) VALUES (?, ?, ?, ?, ?)", name, (req.motto ?? "").trim(), color, now(), count === 0 ? 1 : 0);
-    return this.member(id);
-  }
   async updateMember(id: number, req: { name: string; motto?: string; color?: string | null }) {
     const m = await this.db.first<MemberRow>("SELECT * FROM members WHERE id = ?", id);
     if (!m) throw new NotFound("Mitglied nicht gefunden");
@@ -136,7 +122,7 @@ export class Repo {
     return this.member(id);
   }
   async deleteMember(id: number) {
-    await this.db.batch([{ sql: "DELETE FROM auth_tokens WHERE memberId = ?", params: [id] }, { sql: "DELETE FROM members WHERE id = ?", params: [id] }]);
+    await this.db.run("DELETE FROM members WHERE id = ?", id);
   }
   async setAdmin(id: number, admin: boolean) {
     if (!(await this.db.first("SELECT id FROM members WHERE id = ?", id))) throw new NotFound("Mitglied nicht gefunden");

@@ -66,9 +66,9 @@ export async function renderEquipment(main) {
 
   const applyTemplate = async () => {
     const prev = store.events.filter(e => !e.isCurrent);
-    if (!prev.length) { toast("Es gibt noch keine frühere LAN-Party als Vorlage. Lege unter „LAN-Party“ eine neue Ausgabe an, dann wird die aktuelle Liste zur Vorlage.", "error", 6000); return; }
+    if (!prev.length) { toast("Noch keine frühere LAN-Party.", "error", 6000); return; }
     const sel = select(prev.map(e => ({ value: e.id, label: e.name })), { value: prev[0].id });
-    modal({ title: "Vorlage übernehmen", body: h("div", {}, h("p", { class: "muted small" }, "Alle Gegenstände der gewählten LAN-Party werden übernommen. Wer damals etwas mitgebracht hat, ist wieder vorausgefüllt. Bereits vorhandene Einträge bleiben unberührt."), field("Quelle", sel)),
+    modal({ title: "Vorlage übernehmen", body: h("div", {}, h("p", { class: "muted small" }, "Übernimmt Gegenstände und Mitbringer."), field("Quelle", sel)),
       buttons: [{ label: "Abbrechen" }, { label: "Übernehmen", class: "primary", onClick: async () => {
         const r = await api.post("/api/equipment/template", { fromEventId: Number(sel.value) });
         toast(`${r.id} Gegenstände übernommen`, "success");

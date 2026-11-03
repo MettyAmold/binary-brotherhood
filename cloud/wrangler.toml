@@ -1,5 +1,4 @@
-# BINARY BROTHERHOOD in der Cloud: Worker + statische Web-App; je Realm ein Durable Object mit eigener SQLite-DB.
-# D1 enthält nur das Realm-Verzeichnis (und den Altbestand aus der Zeit vor den Realms).
+# Worker + Web-App; je Realm ein Durable Object mit SQLite. D1: Realm-Verzeichnis und Konten.
 name = "binary-brotherhood"
 main = "src/index.ts"
 compatibility_date = "2025-10-01"
@@ -11,7 +10,6 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "binary-brotherhood"
-# Nach `npx wrangler d1 create binary-brotherhood` die ausgegebene database_id hier eintragen
 database_id = "bddfd310-eae0-4798-b9be-8b80d189e25e"
 migrations_dir = "migrations"
 
@@ -33,6 +31,3 @@ new_sqlite_classes = ["Hub"]
 tag = "v2"
 new_sqlite_classes = ["Realm"]
 deleted_classes = ["Hub"]
-
-[vars]
-APP_NAME = "BINARY BROTHERHOOD"

@@ -24,7 +24,7 @@ export function gameForm(initial = {}, { showPlayers = true } = {}) {
   const search = input({ placeholder: "Steam durchsuchen …", type: "search" });
   const results = h("div", { class: "steam-results hidden" });
   const picked = h("div", { class: "hidden" });
-  const status = h("div", { class: "hint" }, "Suche automatisch bei Steam oder trage die Daten manuell ein.");
+  const status = h("div", { class: "hint" }, "Bei Steam suchen oder selbst eintragen.");
 
   let timer = null;
   const doSearch = async () => {

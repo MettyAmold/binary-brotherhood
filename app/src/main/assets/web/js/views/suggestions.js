@@ -25,8 +25,8 @@ export async function renderSuggestions(main, params) {
     const shown = (scope === "current" ? cur : next).slice().sort((a, b) => (b.score - a.score) || (b.createdAt - a.createdAt));
     mount(content,
       h("p", { class: "muted small" }, scope === "current"
-        ? "Was sollen wir auf dieser LAN spielen? Stimme ab und diskutiere. Gute Vorschläge wandern in die Spieleliste."
-        : "Ideen für die nächste LAN-Party. Bleiben dauerhaft gespeichert und werden beim Anlegen der nächsten Ausgabe übernommen."),
+        ? "Für diese LAN"
+        : "Für die nächste LAN-Party"),
       shown.length ? h("div", { class: "stack" }, shown.map(card)) : empty("💡", "Noch keine Vorschläge. Mach den Anfang!",
         h("button", { class: "btn primary", onClick: () => editSuggestion(null, scope) }, "+ Vorschlag")),
     );

@@ -1,6 +1,6 @@
 // Glücksrad: echtes Rad mit Segmenten, Beschleunigung/Abbremsen, synchron auf allen Geräten.
 // Alternative: Abstimmung.
-import { h, mount, empty, toast, checkbox, confetti, avatar, confirmDialog } from "../ui.js";
+import { h, mount, toast, checkbox, confetti, avatar, confirmDialog } from "../ui.js";
 import { api } from "../api.js";
 import { store, on } from "../store.js";
 import { startSession } from "./games.js";
@@ -57,7 +57,7 @@ export async function renderWheel(main) {
         h("div", { class: "wheel-list", style: { marginTop: "10px" } }, list.length ? list.map((g, i) => h("div", { class: `it ${wheel.winnerId === g.id ? "winner" : ""}` },
           h("span", { class: "sw", style: { background: PALETTE[i % PALETTE.length].bg } }), h("span", { class: "grow ellipsis" }, g.name),
           g.playedThisEvent ? h("span", { class: "chip green", title: "diese LAN schon gespielt" }, "✓") : null,
-        )) : h("div", { class: "muted small" }, "Keine Spiele – füge welche hinzu oder ändere die Filter.")),
+        )) : h("div", { class: "muted small" }, "Keine Spiele für diese Filter.")),
       ),
       winnerBox,
     );
@@ -152,7 +152,7 @@ export async function renderWheel(main) {
         ) : null,
         h("div", { class: "card", style: { marginTop: "12px" } },
           h("h3", {}, "Neue Abstimmung"),
-          h("p", { class: "muted small" }, `Alle stimmen über ${list.length} Spiele ab (gleiche Filter wie beim Rad). Bei Gleichstand entscheidet das Los.`),
+          h("p", { class: "muted small" }, `${list.length} Spiele · bei Gleichstand entscheidet das Los`),
           h("button", { class: "btn primary", onClick: async () => { await requireMe(); await api.post("/api/polls"); } }, "🗳 Abstimmung starten"),
         ),
       );
@@ -163,7 +163,7 @@ export async function renderWheel(main) {
       h("div", { class: "card gold" },
         h("div", { class: "row between wrap" }, h("h3", {}, "Abstimmung läuft ", h("span", { class: "chip green live" }, `${poll.votes.length} Stimmen`)),
           h("button", { class: "btn sm danger", onClick: async () => { if (await confirmDialog("Abstimmung beenden?", "Das Spiel mit den meisten Stimmen gewinnt.", { okLabel: "Beenden", danger: false })) await api.post(`/api/polls/${poll.id}/close`); } }, "Beenden")),
-        h("p", { class: "muted small" }, myVote ? `Deine Stimme: ${byId.get(myVote.gameId)?.name ?? "?"} – du kannst sie noch ändern.` : "Tippe auf ein Spiel, um abzustimmen."),
+        h("p", { class: "muted small" }, myVote ? `Deine Stimme: ${byId.get(myVote.gameId)?.name ?? "?"} (änderbar)` : "Spiel antippen, um abzustimmen."),
         h("div", { class: "grid tight" }, list.map(g => h("button", { class: `btn ${myVote && myVote.gameId === g.id ? "active" : ""}`, style: { justifyContent: "flex-start", textAlign: "left", whiteSpace: "normal" }, onClick: async () => {
           const me = await requireMe(); if (!me) return;
           await api.post(`/api/polls/${poll.id}/vote`, { gameId: g.id });

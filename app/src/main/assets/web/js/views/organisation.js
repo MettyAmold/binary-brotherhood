@@ -1,11 +1,10 @@
-// LAN-Party-Ausgaben verwalten, Host-Informationen.
-import { h, mount, modal, confirmDialog, empty, toast, input, field, checkbox, fmtDate } from "../ui.js";
+// LAN-Party-Ausgaben verwalten.
+import { h, mount, modal, confirmDialog, toast, input, field, checkbox } from "../ui.js";
 import { api } from "../api.js";
 import { store, on } from "../store.js";
 
 export async function renderOrganisation(main) {
   const content = h("div");
-  let host = null;
 
   const draw = () => {
     const cur = store.event;
@@ -20,29 +19,20 @@ export async function renderOrganisation(main) {
           h("a", { class: "btn", href: "#/equipment" }, "Ausrüstung")),
       ) : null,
       h("div", { class: "card" }, h("h3", {}, "Nächste LAN-Party anlegen"),
-        h("p", { class: "small muted" }, "Startet eine neue Ausgabe: Spielhistorie, Kosten und Ausrüstung beginnen frisch. Die Ausrüstungsliste wird auf Wunsch mit den Zusagen der aktuellen LAN vorausgefüllt, Vorschläge „für nächstes Jahr“ werden zu Vorschlägen für die neue LAN."),
+        h("p", { class: "small muted" }, "Historie, Kosten und Ausrüstung beginnen leer."),
         h("button", { class: "btn primary", onClick: () => editEvent(null) }, "+ Neue LAN-Party")),
       others.length ? h("div", { class: "card" }, h("h3", {}, "Frühere / weitere Ausgaben"),
         others.map(e => h("div", { class: "row", style: { padding: "8px 0", borderBottom: "1px solid var(--line)" } },
           h("div", { class: "grow" }, h("strong", {}, e.name), h("div", { class: "small muted" }, `${e.startDate} · ${e.days} Tage`)),
           h("button", { class: "btn sm", onClick: async () => { if (await confirmDialog("Ausgabe aktivieren?", `„${e.name}“ wird zur aktuellen LAN-Party.`, { okLabel: "Aktivieren", danger: false })) await api.post(`/api/events/${e.id}/activate`); } }, "Aktivieren"),
           h("button", { class: "btn sm ghost", onClick: () => editEvent(e) }, "✎"),
-          h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Ausgabe löschen?", "Historie, Kosten und Ausrüstung dieser Ausgabe gehen verloren.")) await api.del(`/api/events/${e.id}`); } }, "✕")))) : null,
-      h("div", { class: "card" }, h("h3", {}, "Host & Verbindung"),
-        host ? h("div", { class: "stack", style: { marginTop: "8px" } },
-          h("div", { class: "url-box" }, host.addresses.length ? `http://${host.addresses[0]}:${host.port}` : "Keine WLAN-Adresse gefunden"),
-          host.addresses.length > 1 ? h("div", { class: "small muted" }, "Weitere: " + host.addresses.slice(1).map(a => `http://${a}:${host.port}`).join(", ")) : null,
-          h("dl", { class: "kv" }, h("dt", {}, "Verbundene Geräte"), h("dd", {}, String(host.clients)), h("dt", {}, "Version"), h("dd", {}, host.version), h("dt", {}, "Datenbank"), h("dd", { class: "small mono" }, host.dbPath)),
-          h("p", { class: "small muted" }, "Alle Daten liegen ausschließlich auf dem Host-Handy. Teilnehmer öffnen die Adresse im Browser desselben WLANs. Tipp: „Zum Startbildschirm hinzufügen“ für ein App-Gefühl."),
-        ) : h("div", { class: "muted small" }, "Lade …")),
+          h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Ausgabe löschen?", "Historie, Kosten und Ausrüstung dieser Ausgabe werden gelöscht.")) await api.del(`/api/events/${e.id}`); } }, "✕")))) : null,
     );
   };
 
   mount(main, h("div", { class: "page-head" }, h("h2", {}, "LAN-Party")), content);
   draw();
-  api.get("/api/host", { silent: true }).then(hh => { host = hh; draw(); }).catch(() => {});
-  const offs = [on("events", draw), on("connection", () => api.get("/api/host", { silent: true }).then(hh => { host = hh; draw(); }).catch(() => {}))];
-  return () => offs.forEach(f => f());
+  return on("events", draw);
 }
 
 function editEvent(e) {

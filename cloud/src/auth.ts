@@ -1,6 +1,6 @@
 // Passwörter (PBKDF2-HMAC-SHA256 über WebCrypto) und Geräte-Tokens, kompatibel zum Format der Android-App
 // ("pbkdf2:<Iterationen>:<Salt-Base64>:<Hash-Base64>"), damit exportierte Hashes weiter gelten.
-import { Db, now } from "./db";
+import { Db } from "./db";
 import { BadRequest } from "./logic";
 
 // Workers (Free-Tarif) haben wenig CPU-Zeit pro Aufruf; 20.000 Iterationen reichen für eine LAN-Party-App.
@@ -8,7 +8,6 @@ const ITERATIONS = 20_000;
 
 const b64 = (buf: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const unb64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-const b64url = (buf: Uint8Array) => b64(buf).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 async function pbkdf2(password: string, salt: Uint8Array, iterations: number): Promise<ArrayBuffer> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
@@ -43,13 +42,13 @@ export function validatePassword(pw: string) {
   if (pw.length > 128) throw new BadRequest("Passwort ist zu lang");
 }
 
-export interface MemberRow { id: number; name: string; motto: string; color: string; hasAvatar: number; createdAt: number; password: string; isAdmin: number; avatarUpdatedAt: number | null }
+export interface MemberRow { id: number; name: string; motto: string; color: string; hasAvatar: number; createdAt: number; isAdmin: number; avatarUpdatedAt: number | null }
 export interface Session { member: MemberRow; auth: { userId: number; name: string; superAdmin: boolean } }
 
 /** Realm-Profil des angemeldeten Kontos (der Worker hat das Token bereits geprüft). */
 export async function resolveMember(db: Db, auth: Session["auth"] | null): Promise<Session | null> {
   if (!auth) return null;
-  const member = await db.first<MemberRow>("SELECT id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt FROM members WHERE userId = ?", auth.userId);
+  const member = await db.first<MemberRow>("SELECT id, name, motto, color, hasAvatar, createdAt, isAdmin, avatarUpdatedAt FROM members WHERE userId = ?", auth.userId);
   return member ? { member, auth } : null;
 }
 

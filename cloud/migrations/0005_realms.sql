@@ -1,5 +1,4 @@
--- Realms: jede Gruppe (LAN-Party oder Online-Runde) hat ihre eigene Datenbank in einem Durable Object.
--- Hier steht nur das Verzeichnis. Die Tabellen von 0001–0004 bleiben als Altbestand des ersten Realms liegen.
+-- Realm-Verzeichnis. Die Daten eines Realms liegen in seinem Durable Object (Schema: realm-schema/).
 CREATE TABLE IF NOT EXISTS realms (
   slug TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'lan', createdAt INTEGER NOT NULL, legacy INTEGER NOT NULL DEFAULT 0
 );

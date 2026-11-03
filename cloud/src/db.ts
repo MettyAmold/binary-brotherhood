@@ -3,11 +3,10 @@
 import type { Realm } from "./realm";
 
 export interface Env {
-  /** Realm-Verzeichnis (und Altbestand aus der Zeit vor den Realms) */
+  /** Realm-Verzeichnis und Konten */
   DB: D1Database;
   ASSETS: Fetcher;
   REALM: DurableObjectNamespace<Realm>;
-  APP_NAME: string;
 }
 
 export const now = () => Date.now();
