@@ -1,5 +1,5 @@
 // Reine Geschäftslogik ohne Datenbank: XP-Regeln, Level, Kostenaufteilung, Freigabe-Pfade.
-// 1:1-Port von domain/Xp.kt, domain/Costs.kt und domain/ShareScanner.kt der Android-App.
+// Reine Logik ohne Datenbank: XP und Level, Kostenaufteilung, Erkennung von Spielordnern.
 
 export const XP = {
   GAME_PLAYED: "game_played", GAME_ADDED: "game_added", SUGGESTION_CREATED: "suggestion", SUGGESTION_ADOPTED: "suggestion_adopted",

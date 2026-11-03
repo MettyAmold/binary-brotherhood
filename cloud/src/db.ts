@@ -60,4 +60,3 @@ export class Db {
 }
 
 export const bool = (v: unknown) => v === 1 || v === true || v === "1";
-export const nul = <T>(v: T | null | undefined): T | null => (v === undefined ? null : v);

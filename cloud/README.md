@@ -1,6 +1,6 @@
 # BINARY BROTHERHOOD – Cloud
 
-Cloudflare Worker mit API (TypeScript) und Web-App (`app/src/main/assets/web`).
+Cloudflare Worker mit API (TypeScript) und Web-App (`web/`).
 Live: https://binary-brotherhood.binary-brotherhood-cloud.workers.dev
 
 ## Aufbau

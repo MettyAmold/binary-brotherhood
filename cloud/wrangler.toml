@@ -4,7 +4,7 @@ main = "src/index.ts"
 compatibility_date = "2025-10-01"
 
 [assets]
-directory = "../app/src/main/assets/web"
+directory = "../web"
 binding = "ASSETS"
 
 [[d1_databases]]

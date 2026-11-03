@@ -98,7 +98,7 @@ export async function renderMembers(main, params) {
       h("div", { class: "card" }, h("h3", {}, "XP-Protokoll"), h("div", { style: { marginTop: "8px" } }, log)),
       h("div", { class: "card" }, h("h3", {}, "Ränge der Bruderschaft"),
         h("div", { class: "small muted", style: { marginTop: "6px" } }, "Novize (1) · Laienbruder (3) · Bruder (5) · Mönch (8) · Prior (11) · Abt (15) · Erzabt (20) · Großmeister (26) · Binärer Erleuchteter (33)"),
-        h("div", { class: "small muted", style: { marginTop: "6px" } }, "XP: Runde gespielt +50 · LAN-Tag +30 · Vorschlag übernommen +40 · Ausrüstung mitgebracht +25 · Spiel hinzugefügt +20 · Vorschlag +15 · Einkauf +15 · Beitrag +10 · Kommentar/Abstimmung +5")),
+        h("div", { class: "small muted", style: { marginTop: "6px" } }, "XP: Turniersieg +100 · Runde gespielt +50 · LAN-Tag +30 · Vorschlag übernommen +40 · Ausrüstung mitgebracht +25 · Spiel hinzugefügt +20 · Vorschlag +15 · Einkauf +15 · Beitrag +10 · Kommentar/Abstimmung +5")),
     );
   };
 

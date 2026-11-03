@@ -6,17 +6,10 @@ export class ApiError extends Error {
 }
 
 // ---------- Realm: jede Gruppe hat ihre eigene Datenbank, gewählt beim Login ----------
-const LEGACY_REALM = "binary-brotherhood";
 let realm = (() => {
   const fromUrl = new URLSearchParams(location.search).get("realm");
   if (fromUrl) return fromUrl.toLowerCase();
-  try {
-    // Wer schon vor den Realms angemeldet war, landet ohne Nachfrage im ersten Realm
-    // (nur solange noch nie ein Realm gewählt wurde – „Realm wechseln“ speichert bewusst einen leeren Wert)
-    const stored = localStorage.getItem("bb.realm");
-    if (stored !== null) return stored;
-    return localStorage.getItem("bb.token") ? LEGACY_REALM : "";
-  } catch { return ""; }
+  try { return localStorage.getItem("bb.realm") || ""; } catch { return ""; }
 })();
 
 /** Slug des gewählten Realms ("" = noch keiner gewählt). */
@@ -34,16 +27,9 @@ syncRealmCookie();
 // Mehrere Tabs mit verschiedenen Realms: beim Zurückkehren den eigenen wieder setzen
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncRealmCookie(); });
 
-/** Ein Login-Token für alle Realms (Konto). Ältere Stände speicherten es je Realm – einmalig übernehmen. */
+/** Login-Token des Kontos (gilt für alle Realms). */
 export function getToken() {
-  try {
-    let t = localStorage.getItem("bb.token");
-    if (!t) {
-      t = localStorage.getItem(`bb.token.${LEGACY_REALM}`) || "";
-      if (t) { localStorage.setItem("bb.token", t); localStorage.removeItem(`bb.token.${LEGACY_REALM}`); }
-    }
-    return t || "";
-  } catch { return ""; }
+  try { return localStorage.getItem("bb.token") || ""; } catch { return ""; }
 }
 export function setToken(t) {
   try { t ? localStorage.setItem("bb.token", t) : localStorage.removeItem("bb.token"); } catch { /* privater Modus */ }

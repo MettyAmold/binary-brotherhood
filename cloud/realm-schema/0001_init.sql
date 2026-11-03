@@ -1,4 +1,4 @@
--- Schema entspricht der Android-App (Room v3) plus Cloud-Ergänzungen: Admin-Flag, Avatar in der DB,
+-- Grundschema eines Realms: Admin-Flag, Avatar in der DB,
 -- Einstellungen (Einladungscode), Upload-Schlüssel je Freigabe, Änderungsprotokoll für Polling.
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, year INTEGER NOT NULL, startDate TEXT NOT NULL,
