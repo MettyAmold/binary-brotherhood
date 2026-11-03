@@ -89,6 +89,21 @@ async function renderRoute() {
   window.scrollTo({ top: 0 });
 }
 
+// ---------- Android-App ----------
+const APK_REPO = "MettyAmold/binary-brotherhood";
+const APK_URL = `https://github.com/${APK_REPO}/releases/latest/download/BinaryBrotherhood.apk`;
+const inAndroidApp = /\bwv\b|BinaryBrotherhood\//.test(navigator.userAgent);
+
+/** Link zur neuesten Android-APK; die Versionsnummer kommt von GitHub nach, wenn erreichbar. */
+function apkLink(cls = "btn block") {
+  const label = h("span", {}, "📱 Android-App herunterladen");
+  const a = h("a", { class: cls, href: APK_URL, rel: "noopener" }, label);
+  fetch(`https://api.github.com/repos/${APK_REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
+    .then(r => r.ok ? r.json() : null).then(rel => { if (rel && rel.tag_name) label.textContent = `📱 Android-App herunterladen (${rel.tag_name.replace(/^v/, "")})`; })
+    .catch(() => {});
+  return a;
+}
+
 // ---------- Login ----------
 
 const passwordInput = (attrs = {}) => input({ type: "password", autocomplete: "current-password", ...attrs });
@@ -129,6 +144,7 @@ export async function renderLogin(message) {
     list,
     h("hr", { class: "sep" }),
     h("button", { class: "btn primary block", onClick: registerDialog }, "Neues Profil anlegen"),
+    inAndroidApp ? null : h("div", { style: { marginTop: "10px" } }, apkLink("btn ghost block"), h("div", { class: "small muted", style: { textAlign: "center", marginTop: "4px" } }, "Für Handy und Tablet, mit Update-Funktion. Beim Installieren „Unbekannte Quellen“ erlauben.")),
   )));
 }
 
@@ -202,6 +218,7 @@ function profileMenu() {
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
+      inAndroidApp ? null : h("a", { class: "it", href: APK_URL, rel: "noopener", style: { textDecoration: "none", color: "inherit" } }, h("span", {}, "📱"), h("span", { class: "grow" }, "Android-App herunterladen")),
       h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
     ),
     buttons: [{ label: "Schließen" }],
