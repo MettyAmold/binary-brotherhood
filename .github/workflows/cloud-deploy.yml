@@ -18,12 +18,15 @@ jobs:
         working-directory: cloud
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 80   # für das Änderungsprotokoll
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: cloud/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - run: node scripts/changelog.mjs
       - run: npx tsc --noEmit
       - name: Datenbank-Migrationen anwenden
         run: npx wrangler d1 migrations apply binary-brotherhood --remote

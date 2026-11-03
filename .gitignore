@@ -12,3 +12,4 @@
 /.kotlin
 /cloud/node_modules
 /cloud/.wrangler
+/cloud/src/changelog.json

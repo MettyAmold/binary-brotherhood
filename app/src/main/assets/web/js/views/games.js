@@ -13,6 +13,11 @@ export async function renderGames(main, params) {
   let games = [], sessions = [];
   const content = h("div");
   const tabsEl = h("div", { class: "tabs" });
+  let query = "";
+  const search = h("input", { class: "input search-input", type: "search", placeholder: "🔍 Spiele durchsuchen …", autocomplete: "off",
+    onInput: (e) => { query = e.target.value; draw(); } });
+  const norm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const matches = (g) => { const q = norm(query).trim(); if (!q) return true; const hay = norm(`${g.name} ${g.description} ${g.addedByName || ""} ${g.players}`); return q.split(/\s+/).every(w => hay.includes(w)); };
 
   const load = async () => {
     [games, sessions] = await Promise.all([api.get("/api/games"), api.get("/api/sessions")]);
@@ -29,10 +34,12 @@ export async function renderGames(main, params) {
     mount(tabsEl, tabs.map(([id, label]) => h("button", { class: id === tab ? "active" : "", onClick: () => { tab = id; location.hash = `#/games/${id}`; draw(); } }, label)));
     if (tab === "running") mount(content, runningView(running));
     else if (tab === "history") mount(content, historyView(sessions.filter(s => s.endedAt)));
-    else mount(content, listView(tab === "selected" ? selected : games));
+    else mount(content, listView((tab === "selected" ? selected : games).filter(matches)));
+    search.classList.toggle("hidden", tab === "running" || tab === "history");
   };
 
   const listView = (list) => {
+    if (!list.length && query.trim()) return empty("🔍", `Kein Spiel passt zu „${query.trim()}“.`, h("button", { class: "btn", onClick: () => { query = ""; search.value = ""; draw(); } }, "Suche leeren"));
     if (!list.length) return empty("🎮", tab === "selected" ? "Noch kein Spiel für die nächste Runde markiert. Tippe auf den Stern bei einem Spiel." : "Noch keine Spiele. Füge das erste hinzu!",
       h("button", { class: "btn primary", onClick: () => editGame() }, "+ Spiel hinzufügen"));
     return h("div", { class: "grid" }, list.map(gameCard));
@@ -121,7 +128,7 @@ export async function renderGames(main, params) {
     h("div", { class: "page-head" }, h("h2", {}, "Spiele"),
       h("button", { class: "btn", onClick: sharesDialog }, "💾 Freigaben"),
       h("button", { class: "btn primary", onClick: () => editGame() }, "+ Spiel")),
-    tabsEl, content,
+    tabsEl, search, content,
     h("button", { class: "btn primary fab", onClick: () => editGame(), "aria-label": "Spiel hinzufügen" }, "+"),
   );
   await load();

@@ -14,28 +14,62 @@ async function uploadImage(file) {
   return res.json();
 }
 
-/** Anhang-Auswahl mit Vorschau: { el, ids() } – Dateien werden sofort hochgeladen und beim Speichern verknüpft. */
+const IMAGE_URL = /^https?:\/\/\S+\.(gif|png|jpe?g|webp)(\?\S*)?$/i;
+const GIF_HOSTS = /^https?:\/\/(media\d*\.giphy\.com|i\.giphy\.com|media\.tenor\.com|c\.tenor\.com|i\.imgur\.com)\//i;
+
+/** Anhang-Auswahl mit Vorschau. Dateien kommen per Knopf, Strg+V, Ziehen oder als eingefügter Bild-Link. */
 function attachmentPicker(existing = [], { compact = false } = {}) {
   const items = existing.map(m => ({ ...m }));
   const thumbs = h("div", { class: "attach-thumbs" });
-  const file = h("input", { type: "file", accept: "image/jpeg,image/png,image/gif,image/webp", multiple: true, class: "hidden", onChange: async () => {
-    const files = [...file.files]; file.value = "";
+  const full = () => { if (items.length >= 8) { toast("Maximal 8 Bilder pro Beitrag", "error"); return true; } return false; };
+  const addFiles = async (files) => {
     for (const f of files) {
-      if (items.length >= 8) { toast("Maximal 8 Bilder pro Beitrag", "error"); break; }
+      if (full()) break;
       const ph = { id: null, url: URL.createObjectURL(f), pending: true };
       items.push(ph); draw();
       try { const m = await uploadImage(f); Object.assign(ph, m, { pending: false }); }
       catch (e) { items.splice(items.indexOf(ph), 1); toast(e.message, "error"); }
       draw();
     }
-  } });
+  };
+  const addUrl = async (url) => {
+    if (full()) return;
+    const ph = { id: null, url, pending: true };
+    items.push(ph); draw();
+    try { const m = await api.post("/api/media/url", { url }, { silent: true }); Object.assign(ph, m, { pending: false }); }
+    catch (e) { items.splice(items.indexOf(ph), 1); toast(e.message, "error"); }
+    draw();
+  };
+  /** Strg+V auf einem Textfeld: Bilder aus der Zwischenablage oder ein Bild-Link werden Anhang. */
+  const bindPaste = (el) => {
+    el.addEventListener("paste", (e) => {
+      const cd = e.clipboardData; if (!cd) return;
+      const files = [...cd.items].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+      if (files.length) { e.preventDefault(); addFiles(files); return; }
+      const text = (cd.getData("text/plain") || "").trim();
+      if (text && !/\s/.test(text) && (IMAGE_URL.test(text) || GIF_HOSTS.test(text))) { e.preventDefault(); addUrl(text); }
+    });
+  };
+  /** Bilder auf das Element ziehen. */
+  const bindDrop = (el) => {
+    el.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.items || [])].some(i => i.kind === "file")) { e.preventDefault(); el.classList.add("drop-target"); } });
+    el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+    el.addEventListener("drop", (e) => {
+      el.classList.remove("drop-target");
+      const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith("image/"));
+      if (files.length) { e.preventDefault(); addFiles(files); return; }
+      const url = (e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain") || "").trim();
+      if (url && (IMAGE_URL.test(url) || GIF_HOSTS.test(url))) { e.preventDefault(); addUrl(url); }
+    });
+  };
+  const file = h("input", { type: "file", accept: "image/jpeg,image/png,image/gif,image/webp", multiple: true, class: "hidden", onChange: () => { const f = [...file.files]; file.value = ""; addFiles(f); } });
   const draw = () => mount(thumbs, items.map(m => h("div", { class: `attach-thumb ${m.pending ? "pending" : ""}` },
     h("img", { src: m.url, alt: "" }),
     h("button", { class: "rm", type: "button", "aria-label": "Entfernen", onClick: () => { items.splice(items.indexOf(m), 1); draw(); } }, "✕"))));
   draw();
   const btn = h("button", { class: compact ? "btn icon" : "btn sm", type: "button", title: "Bild oder GIF anhängen", onClick: () => file.click() }, compact ? "📷" : "📷 Bild / GIF");
   const el = h("div", { class: "attach" }, compact ? null : thumbs, btn, file);
-  return { el, thumbs, ids: () => items.filter(m => m.id).map(m => m.id), busy: () => items.some(m => m.pending) };
+  return { el, thumbs, bindPaste, bindDrop, ids: () => items.filter(m => m.id).map(m => m.id), busy: () => items.some(m => m.pending) };
 }
 
 export async function renderForum(main) {
@@ -76,7 +110,8 @@ export async function renderForum(main) {
       inp.value = "";
     };
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
-    return h("div", { class: "comments" },
+    pick.bindPaste(inp);
+    const box = h("div", { class: "comments" },
       p.comments.map(c => h("div", { class: "comment" }, avatar(c, "sm"),
         h("div", { class: "bubble" }, h("div", { class: "meta" }, h("strong", {}, c.authorName), h("span", { title: fmtDate(c.createdAt) }, timeAgo(c.createdAt)),
           store.isAdmin ? h("a", { href: "#", class: "muted", onClick: async (e) => { e.preventDefault(); if (await confirmDialog("Kommentar löschen?", "")) await api.del(`/api/forum/comments/${c.id}`); } }, "löschen") : null),
@@ -84,6 +119,8 @@ export async function renderForum(main) {
       h("div", { class: "comment-form" }, inp, pick.el, h("button", { class: "btn", onClick: send }, "Senden")),
       pick.thumbs,
     );
+    pick.bindDrop(box);
+    return box;
   };
 
   mount(main,
@@ -101,9 +138,10 @@ function editPost(p) {
   const body = textarea({ value: p ? p.body : "", placeholder: "Was gibt's? Links werden automatisch klickbar.", maxlength: 8000, style: { minHeight: "140px" } });
   const pinned = h("input", { type: "checkbox", checked: p ? p.pinned : false });
   const pick = attachmentPicker(p ? p.media || [] : []);
-  modal({
+  pick.bindPaste(body); pick.bindPaste(title);
+  const ctx = modal({
     title: p ? "Beitrag bearbeiten" : "Neuer Beitrag",
-    body: h("div", {}, field("Titel", title), field("Text", body), field("Bilder / GIFs", pick.el, "JPG, PNG, GIF, WebP – Fotos werden automatisch verkleinert, GIFs bis 1,5 MB"),
+    body: h("div", {}, field("Titel", title), field("Text", body), field("Bilder / GIFs", pick.el, "Einfügen mit Strg+V, Hineinziehen oder Knopf. GIF-Links (z. B. von GIPHY oder Tenor) einfach ins Textfeld einfügen."),
       h("label", { class: "check" }, pinned, h("span", {}, "📌 Organisatorischer Hinweis (bleibt oben angepinnt)"))),
     buttons: [{ label: "Abbrechen" }, { label: p ? "Speichern" : "Veröffentlichen", class: "primary", onClick: async () => {
       if (!body.value.trim() && !pick.ids().length) { toast("Bitte einen Text schreiben oder ein Bild anhängen", "error"); return false; }
@@ -114,4 +152,5 @@ function editPost(p) {
       toast(p ? "Gespeichert" : "Veröffentlicht (+10 XP)", "success");
     } }],
   });
+  pick.bindDrop(ctx.body);
 }

@@ -39,6 +39,7 @@ function renderShell() {
     h("div", { class: "brand" }, h("div", { class: "title" }, "BINARY BROTHERHOOD"), h("div", { class: "sub" }, "Ctrl Alt Delirium · Est. 2017")),
     h("div", { class: "spacer" }),
     store.event ? h("a", { class: "event-chip", href: "#/organisation" }, store.event.name) : null,
+    discordChip(),
     onlineChip(),
     meChip(),
   );
@@ -48,6 +49,73 @@ function renderShell() {
   const main = h("main", { class: "main", id: "main" });
   mount(root, h("div", { class: "app" }, header, nav, main));
   return main;
+}
+
+// ---------- Discord ----------
+let discord = { invite: "", guildId: "" };
+async function loadDiscord() {
+  try { discord = await api.get("/api/discord", { silent: true }); } catch { /* egal */ }
+  const c = document.getElementById("discord-chip"); if (c) c.replaceWith(discordChip());
+}
+function discordChip() {
+  if (!discord.invite && !discord.guildId) return h("span", { id: "discord-chip", class: "hidden" });
+  const n = discord.widget?.presenceCount;
+  return h("button", { id: "discord-chip", class: "btn sm discord-btn", title: "Discord-Server", onClick: discordDialog }, "💬 Discord", n != null ? h("span", { class: "small" }, ` ${n}`) : null);
+}
+async function discordDialog() {
+  await loadDiscord();
+  const w = discord.widget;
+  const joinUrl = discord.invite || w?.instantInvite || "";
+  const byChannel = new Map();
+  for (const m of w?.members || []) if (m.channelId) (byChannel.get(m.channelId) || byChannel.set(m.channelId, []).get(m.channelId)).push(m);
+  const member = (m) => h("div", { class: "discord-member" }, m.avatar ? h("img", { src: m.avatar, alt: "" }) : null, h("span", { class: `st ${m.status}` }), h("span", { class: "grow" }, m.name), m.game ? h("span", { class: "small muted" }, "🎮 " + m.game) : null);
+  modal({
+    title: w?.name ? `Discord: ${w.name}` : "Discord",
+    body: h("div", {},
+      joinUrl ? h("a", { class: "btn discord-btn block", href: joinUrl, target: "_blank", rel: "noopener" }, "Server beitreten / öffnen") : h("p", { class: "muted small" }, "Kein Einladungslink hinterlegt."),
+      discord.widgetError ? h("p", { class: "small", style: { color: "#ff9a9a", marginTop: "10px" } }, discord.widgetError) : null,
+      w ? h("div", { style: { marginTop: "12px" } },
+        h("div", { class: "small muted" }, `${w.presenceCount} online`),
+        (w.channels || []).filter(ch => byChannel.has(ch.id)).map(ch => h("div", { style: { marginTop: "10px" } }, h("strong", { class: "small" }, "🔊 " + ch.name), h("div", { class: "stack", style: { marginTop: "4px" } }, byChannel.get(ch.id).map(member)))),
+        h("div", { class: "stack", style: { marginTop: "10px" } }, (w.members || []).filter(m => !m.channelId).map(member))) : null,
+      store.isAdmin ? h("p", { class: "small muted", style: { marginTop: "12px" } }, "Einstellungen: Profil-Menü → Discord-Server.") : null),
+    buttons: [{ label: "Schließen" }],
+  });
+}
+function discordSettingsDialog() {
+  const invite = input({ value: discord.invite || "", placeholder: "https://discord.gg/abc123", autocapitalize: "off", spellcheck: false });
+  const guild = input({ value: discord.guildId || "", placeholder: "z. B. 123456789012345678", inputmode: "numeric" });
+  modal({
+    title: "Discord-Server",
+    body: h("div", {},
+      field("Einladungslink", invite, "Discord: Rechtsklick auf den Server → Leute einladen → Link nie ablaufen lassen."),
+      field("Server-ID (optional)", guild, "Für die Anzeige, wer online ist und wer in welchem Sprachkanal sitzt. Discord: Einstellungen → Erweitert → Entwicklermodus an, dann Rechtsklick auf den Server → Server-ID kopieren. Außerdem in den Servereinstellungen unter „Widget“ das Server-Widget aktivieren.")),
+    buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
+      discord = { ...discord, ...(await api.put("/api/discord", { invite: invite.value.trim(), guildId: guild.value.trim() })) };
+      toast("Discord gespeichert", "success"); loadDiscord();
+    } }],
+  });
+}
+
+// ---------- Änderungsprotokoll für Admins ----------
+async function showChangelog(onlyNew) {
+  let data; try { data = await api.get("/api/changelog", { silent: true }); } catch { return; }
+  const fresh = data.entries.filter(e => e.ts > data.seen);
+  if (onlyNew && (!fresh.length || !data.seen)) {
+    // Erster Besuch: nicht mit der ganzen Historie überfallen, nur als gesehen markieren
+    if (!data.seen) api.post("/api/changelog/seen", {}, { silent: true }).catch(() => {});
+    return;
+  }
+  const list = onlyNew ? fresh : data.entries;
+  modal({
+    title: onlyNew ? `Neu seit deinem letzten Besuch (${fresh.length})` : "Änderungsprotokoll",
+    wide: true,
+    body: h("div", { class: "changelog" }, list.map(e => h("div", { class: `entry ${e.ts > data.seen ? "new" : ""}` },
+      h("div", { class: "row between" }, h("strong", {}, e.subject), h("span", { class: "small muted" }, new Date(e.ts).toLocaleDateString("de-AT"))),
+      e.items.length ? h("ul", { class: "small" }, e.items.map(i => h("li", {}, i))) : null))),
+    onClose: () => api.post("/api/changelog/seen", {}, { silent: true }).catch(() => {}),
+    buttons: [{ label: "Alles klar" }],
+  });
 }
 
 /** „● 3 online“ im Header; Klick zeigt, wer gerade verbunden ist. */
@@ -215,6 +283,8 @@ function profileMenu() {
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
       (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); soundsDialog(); } }, h("span", {}, "🔊"), h("span", { class: "grow" }, "Glücksrad-Sounds")) : null,
       (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); resetDialog(); } }, h("span", {}, "🧹"), h("span", { class: "grow" }, "LAN zurücksetzen")) : null,
+      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); discordSettingsDialog(); } }, h("span", {}, "💬"), h("span", { class: "grow" }, "Discord-Server")) : null,
+      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); showChangelog(false); } }, h("span", {}, "📜"), h("span", { class: "grow" }, "Änderungsprotokoll")) : null,
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
@@ -378,6 +448,8 @@ async function init() {
   }
   connect();
   await renderRoute();
+  loadDiscord();
+  if (store.isAdmin && store.mode === "cloud") showChangelog(true);
 }
 
 window.addEventListener("bb:unauthorized", () => {
@@ -390,6 +462,7 @@ window.addEventListener("hashchange", renderRoute);
 const refreshOnline = () => { const c = document.getElementById("online-chip"); if (c) c.replaceWith(onlineChip()); };
 on("connection", refreshOnline);
 on("presence", refreshOnline);
+on("discord", () => loadDiscord());
 on("members", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("me", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("events", () => { const chip = document.querySelector(".event-chip"); if (chip && store.event) chip.textContent = store.event.name; });

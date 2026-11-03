@@ -5,6 +5,7 @@ import { Repo, toBytes } from "./repo";
 import { resolveSession, issueToken, login, changePassword, resetPassword, validatePassword, hashPassword, randomCode, Session } from "./auth";
 import { steamSearch, steamDetails, steamAppIdFromUrl } from "./steam";
 import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound, gameKey } from "./logic";
+import changelog from "./changelog.json";
 export { Hub } from "./hub";
 
 const VERSION = "2.0.0";
@@ -227,7 +228,69 @@ put("/api/forum/{id}", async c => { await requireAuthorOrAdmin(c, "forum_posts",
 del("/api/forum/{id}", async c => { requireAdmin(c); await c.repo.deletePost(id(c)); await c.broadcast("forum"); return ok(); });
 post("/api/forum/{id}/comments", async c => { const r = await c.body<{ text: string; mediaIds?: number[] }>(); await c.repo.commentPostWithMedia(id(c), actor(c), r.text, r.mediaIds ?? []); await c.broadcast("forum"); return ok(); });
 
+// ---------------- Änderungsprotokoll (für Admins, aus der Git-Historie beim Deploy)
+interface ChangeEntry { hash: string; ts: number; subject: string; items: string[] }
+get("/api/changelog", async c => {
+  const s = session(c);
+  const seen = Number(await c.db.setting(`changelogSeen:${s.member.id}`) ?? 0);
+  return { seen, entries: (changelog as ChangeEntry[]).slice(0, 40) };
+});
+post("/api/changelog/seen", async c => {
+  const s = session(c);
+  const latest = Math.max(0, ...(changelog as ChangeEntry[]).map(e => e.ts));
+  await c.db.setSetting(`changelogSeen:${s.member.id}`, String(latest));
+  return ok();
+});
+
+// ---------------- Discord (Admin hinterlegt Einladung und optional die Server-ID fürs Widget)
+const discordConfig = async (c: Ctx) => ({ invite: (await c.db.setting("discordInvite")) ?? "", guildId: (await c.db.setting("discordGuildId")) ?? "" });
+get("/api/discord", async c => {
+  const cfg = await discordConfig(c);
+  let widget: unknown = null, widgetError: string | null = null;
+  if (cfg.guildId) {
+    try {
+      const r = await fetch(`https://discord.com/api/guilds/${cfg.guildId}/widget.json`, { cf: { cacheTtl: 60 } } as RequestInit);
+      if (r.ok) {
+        const w = await r.json() as any;
+        widget = { name: w.name, presenceCount: w.presence_count, instantInvite: w.instant_invite,
+          channels: (w.channels ?? []).map((ch: any) => ({ id: ch.id, name: ch.name })),
+          members: (w.members ?? []).slice(0, 60).map((m: any) => ({ name: m.username, status: m.status, avatar: m.avatar_url, channelId: m.channel_id ?? null, game: m.activity?.name ?? null })) };
+      } else widgetError = r.status === 403 ? "Server-Widget ist in Discord nicht aktiviert (Servereinstellungen → Widget)" : `Discord antwortet mit ${r.status}`;
+    } catch (e) { widgetError = `Discord nicht erreichbar: ${(e as Error).message}`; }
+  }
+  return { ...cfg, widget, widgetError };
+});
+put("/api/discord", async c => {
+  requireAdmin(c);
+  const r = await c.body<{ invite?: string; guildId?: string }>();
+  const invite = String(r.invite ?? "").trim();
+  if (invite && !/^https:\/\/(discord\.gg|discord\.com\/invite)\/[\w-]+$/i.test(invite)) throw new BadRequest("Einladungslink muss wie https://discord.gg/abc123 aussehen");
+  const guildId = String(r.guildId ?? "").trim();
+  if (guildId && !/^\d{15,22}$/.test(guildId)) throw new BadRequest("Server-ID besteht nur aus Ziffern (Discord: Rechtsklick auf den Server → Server-ID kopieren)");
+  await c.db.setSetting("discordInvite", invite);
+  await c.db.setSetting("discordGuildId", guildId);
+  await c.broadcast("discord");
+  return discordConfig(c);
+});
+
 // ---------------- Medien (Bilder/GIFs im Forum)
+post("/api/media/url", async c => {
+  // Eingefügter Bild-/GIF-Link: der Server holt die Datei, damit sie nicht vom fremden Host abhängt
+  const s = session(c);
+  const { url } = await c.body<{ url: string }>();
+  let u: URL; try { u = new URL(String(url)); } catch { throw new BadRequest("Ungültiger Link"); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new BadRequest("Ungültiger Link");
+  const res = await fetch(u.toString(), { headers: { "User-Agent": "BinaryBrotherhood/2.0", Accept: "image/*" }, redirect: "follow" });
+  if (!res.ok) throw new BadRequest(`Bild nicht abrufbar (${res.status})`);
+  const ct = (res.headers.get("Content-Type") ?? "").split(";")[0].trim();
+  if (!/^image\/(jpeg|png|gif|webp)$/.test(ct)) throw new BadRequest("Der Link zeigt auf kein Bild (JPG, PNG, GIF, WebP)");
+  const len = Number(res.headers.get("Content-Length") ?? 0);
+  if (len > 1_900_000) throw new BadRequest("Datei ist zu groß (max. 1,9 MB)");
+  const data = await res.arrayBuffer();
+  if (data.byteLength > 1_900_000) throw new BadRequest("Datei ist zu groß (max. 1,9 MB)");
+  const name = decodeURIComponent(u.pathname.split("/").pop() || "bild").slice(0, 120);
+  return c.repo.createMedia(data, ct, name, s.member.id);
+});
 post("/api/media", async c => {
   const s = session(c);
   const ct = (c.req.headers.get("Content-Type") ?? "").split(";")[0].trim();

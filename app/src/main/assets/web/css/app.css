@@ -342,6 +342,17 @@ p { margin: 0 0 .6em; }
 .media-grid.n2, .media-grid.n3, .media-grid.n4 { grid-template-columns: 1fr 1fr; }
 .media-grid img { width: 100%; max-height: 420px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; background: var(--panel-3); }
 .media-grid.n1 img { max-height: 520px; object-fit: contain; }
+.search-input { margin-bottom: 12px; }
+.drop-target { outline: 2px dashed var(--gold); outline-offset: 4px; border-radius: 10px; }
+.discord-btn { display: inline-flex; align-items: center; gap: 6px; background: #5865f2; color: #fff; border-color: #4752c4; }
+.discord-btn:hover { background: #4752c4; }
+.discord-member { display: flex; align-items: center; gap: 8px; }
+.discord-member img { width: 26px; height: 26px; border-radius: 50%; }
+.discord-member .st { width: 8px; height: 8px; border-radius: 50%; background: #747f8d; }
+.discord-member .st.online { background: #3ba55c; } .discord-member .st.idle { background: #faa81a; } .discord-member .st.dnd { background: #ed4245; }
+.changelog .entry { border-left: 2px solid var(--gold-3); padding: 2px 0 8px 12px; margin-bottom: 8px; }
+.changelog .entry.new { border-left-color: var(--gold); }
+.changelog .entry ul { margin: 4px 0 0; padding-left: 18px; }
 .attach { display: flex; flex-direction: column; gap: 8px; }
 .attach-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .attach-thumbs:empty { display: none; }
