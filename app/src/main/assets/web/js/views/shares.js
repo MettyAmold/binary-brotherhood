@@ -22,7 +22,7 @@ export function sharesDialog() {
         sh.lastScanAt ? `zuletzt ${timeAgo(sh.lastScanAt)}: ` : "noch nicht eingelesen",
         sh.lastError ? h("span", { style: { color: "#ff9a9a" } }, sh.lastError) : (sh.lastScanAt ? `${sh.lastCount} Ordner` : "")),
       h("div", { class: "row wrap", style: { marginTop: "8px" } },
-        h("button", { class: "btn sm", disabled: busy, onClick: async () => {
+        store.mode === "cloud" ? h("button", { class: "btn sm", onClick: () => uploadScriptDialog(sh) }, "Skript für Aktualisierung") : h("button", { class: "btn sm", disabled: busy, onClick: async () => {
           busy = true; toast("Lese Freigabe ein …");
           try { const r = await api.post(`/api/shares/${sh.id}/scan`); toast(scanInfo(r), r.error ? "error" : "success", 5000); } finally { busy = false; load(); }
         } }, "Neu einlesen"),
@@ -36,7 +36,9 @@ export function sharesDialog() {
     title: "Spiele-Freigaben im LAN",
     wide: true,
     body: h("div", {},
-      h("p", { class: "muted small" }, "Jeder Unterordner einer Freigabe wird automatisch als Spiel angelegt. Die App liest beim Start und alle 15 Minuten neu ein. Die Dateien holt sich jeder direkt vom PC: Pfad auf der Spielkarte kopieren und im Explorer einfügen."),
+      h("p", { class: "muted small" }, store.mode === "cloud"
+        ? "Jeder Unterordner einer Freigabe wird als Spiel angelegt. Weil die App in der Cloud läuft, meldet der PC seine Ordner per Skript. Die Dateien holt sich jeder direkt vom PC: Pfad auf der Spielkarte kopieren und im Explorer einfügen."
+        : "Jeder Unterordner einer Freigabe wird automatisch als Spiel angelegt. Die App liest beim Start und alle 15 Minuten neu ein. Die Dateien holt sich jeder direkt vom PC: Pfad auf der Spielkarte kopieren und im Explorer einfügen."),
       list,
       h("hr", { class: "sep" }),
       h("div", { class: "card gold", style: { padding: "12px 14px" } },
@@ -59,12 +61,25 @@ export function sharesDialog() {
             load();
           } }, "Eintragen und einlesen"))),
     ),
-    buttons: [
+    buttons: store.mode === "cloud" ? [{ label: "Schließen" }] : [
       { label: "Alle neu einlesen", onClick: async () => { const rs = await api.post("/api/shares/scan"); toast(rs.map(scanInfo).join(" · ") || "Keine Freigaben", rs.some(r => r.error) ? "error" : "success", 6000); load(); return false; } },
       { label: "Schließen" },
     ],
   });
   load();
+}
+
+/** Cloud: Skript zum erneuten Hochladen der Ordnerliste einer bestehenden Freigabe. */
+function uploadScriptDialog(sh) {
+  const folder = input({ value: "D:\\Spiele", spellcheck: false });
+  const script = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false });
+  const refresh = () => { script.value = buildUploadScript({ folder: folder.value.trim() || "D:\\Spiele", base: location.origin, shareId: sh.id, uploadKey: sh.uploadKey, setupShare: false }); };
+  folder.addEventListener("input", refresh); refresh();
+  modal({
+    title: "Ordnerliste aktualisieren", wide: true,
+    body: h("div", {}, h("p", { class: "small" }, "Am PC in PowerShell einfügen, dann sind neue Spielordner in der App."), field("Ordner am PC", folder), script),
+    buttons: [{ label: "Skript kopieren", onClick: async () => { toast((await copyText(script.value)) ? "Skript kopiert" : "Kopieren nicht möglich", "success"); return false; } }, { label: "Schließen" }],
+  });
 }
 
 // ---------- Assistent ----------
@@ -109,7 +124,99 @@ export function buildSetupScript({ folder, shareName, user, pass }) {
   ].join("\r\n");
 }
 
+/** Cloud-Skript: lädt die Unterordner des Spiele-Ordners zur App hoch; optional vorher die Windows-Freigabe einrichten. */
+export function buildUploadScript({ folder, base, shareId, uploadKey, setupShare, shareName, user, pass }) {
+  const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const lines = [
+    `# BINARY BROTHERHOOD – Spielordner an die App melden` + (setupShare ? ` und Freigabe einrichten (als Administrator ausführen)` : ``),
+    `$ErrorActionPreference = 'Stop'`,
+    `$path = ${q(folder)}`,
+    `if (-not (Test-Path $path)) { throw "Ordner $path gibt es nicht" }`,
+  ];
+  if (setupShare) {
+    lines.push(...buildSetupScript({ folder, shareName, user, pass }).split("\r\n").slice(2).filter(l => !l.startsWith("$path = ")));
+  }
+  lines.push(
+    `# Ordnerliste hochladen`,
+    `$folders = @(Get-ChildItem -LiteralPath $path -Directory | Select-Object -ExpandProperty Name)`,
+    `$body = [System.Text.Encoding]::UTF8.GetBytes((@{ folders = $folders } | ConvertTo-Json -Compress))`,
+    `$r = Invoke-RestMethod -Method Post -Uri ${q(base + "/api/shares/" + shareId + "/folders")} -Headers @{ 'X-Share-Key' = ${q(uploadKey)} } -ContentType 'application/json; charset=utf-8' -Body $body`,
+    `Write-Host ''; Write-Host ("Fertig! " + $r.folders + " Ordner gemeldet, " + $r.added + " neue Spiele.") -ForegroundColor Green`,
+  );
+  return lines.join("\r\n");
+}
+
+/** Assistent für die Cloud: Pfad angeben, Skript am PC ausführen, Ergebnis abwarten. */
+async function cloudShareWizard() {
+  let info = { base: location.origin };
+  try { info = await api.get("/api/shares/wizard", { silent: true }); } catch { /* egal */ }
+  const st = { folder: "D:\\Spiele", host: "", shareName: "Spiele", setupShare: false, user: "bbl", pass: randomPassword(), share: null };
+  const body = h("div");
+  let ctx;
+  const stepsBar = (n) => h("div", { class: "wizard-steps" }, ["PC & Ordner", "Skript", "Ergebnis"].map((l, i) => h("span", { class: i + 1 === n ? "on" : (i + 1 < n ? "done" : "") }, `${i + 1} ${l}`)));
+
+  const step1 = () => {
+    const host = input({ value: st.host, placeholder: "z. B. 192.168.0.10 oder PC-NAME", autocapitalize: "off", spellcheck: false });
+    const folder = input({ value: st.folder, placeholder: "D:\\Spiele", spellcheck: false });
+    const shareName = input({ value: st.shareName, spellcheck: false });
+    const setup = h("input", { type: "checkbox", checked: st.setupShare });
+    mount(body, stepsBar(1),
+      h("p", { class: "small" }, "Die App läuft in der Cloud und kommt nicht in euer LAN. Darum meldet der PC seine Spielordner selbst: Du führst einmal ein Skript aus, bei neuen Spielen einfach nochmal."),
+      field("Adresse des PCs im LAN", host, "Darunter erreichen die anderen deine Freigabe, z. B. 192.168.0.10"),
+      h("div", { class: "form-row" }, field("Ordner am PC", folder, "Jedes Spiel ein Unterordner"), field("Name der Freigabe", shareName)),
+      h("label", { class: "check" }, setup, h("span", {}, "Freigabe am PC gleich mit einrichten (braucht Administratorrechte)")),
+      h("div", { class: "row wrap", style: { marginTop: "14px", justifyContent: "flex-end" } },
+        h("button", { class: "btn primary", onClick: async () => {
+          st.host = host.value.trim(); st.folder = folder.value.trim() || "D:\\Spiele"; st.shareName = (shareName.value.trim() || "Spiele").replace(/[\\/]/g, ""); st.setupShare = setup.checked;
+          if (!st.host) return toast("Adresse fehlt", "error");
+          if (!st.share) st.share = await api.post("/api/shares", { path: `\\\\${st.host}\\${st.shareName}` });
+          step2();
+        } }, "Weiter")));
+  };
+
+  const step2 = () => {
+    const script = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false });
+    script.value = buildUploadScript({ folder: st.folder, base: info.base || location.origin, shareId: st.share.id, uploadKey: st.share.uploadKey, setupShare: st.setupShare, shareName: st.shareName, user: st.user, pass: st.pass });
+    mount(body, stepsBar(2),
+      h("ol", { class: "small", style: { paddingLeft: "20px", lineHeight: "1.7" } },
+        h("li", {}, "Unten auf „Skript kopieren“ tippen."),
+        h("li", {}, "Am PC die Windows-Taste drücken, „powershell“ tippen", st.setupShare ? [" und ", h("strong", {}, "„Als Administrator ausführen“"), " wählen."] : " und öffnen."),
+        h("li", {}, "Im blauen Fenster Rechtsklick (fügt ein) und Enter drücken."),
+        h("li", {}, "Wenn „Fertig!“ erscheint: hier auf „Weiter“.")),
+      script,
+      h("div", { class: "row wrap", style: { marginTop: "14px", justifyContent: "flex-end" } },
+        h("button", { class: "btn ghost", onClick: step1 }, "Zurück"),
+        h("button", { class: "btn", onClick: async () => toast((await copyText(script.value)) ? "Skript kopiert" : "Kopieren nicht möglich – Text markieren und manuell kopieren", "success") }, "Skript kopieren"),
+        h("button", { class: "btn primary", onClick: step3 }, "Weiter")));
+  };
+
+  const step3 = () => {
+    const result = h("div", { style: { marginTop: "10px" } });
+    let timer = null;
+    const check = async () => {
+      const sh = (await api.get("/api/shares")).find(x => x.id === st.share.id);
+      if (sh && sh.lastScanAt) {
+        clearInterval(timer);
+        mount(result, h("div", { class: "card", style: { borderColor: "#35612c", padding: "10px 12px" } }, h("div", { style: { color: "#9ad88c" } }, `Angekommen! ${sh.lastCount} Ordner gemeldet, ${sh.gamesCount} Spiele verknüpft.`)));
+      } else {
+        mount(result, h("div", { class: "muted small" }, "Warte auf das Skript … (prüft alle 5 Sekunden)"));
+      }
+    };
+    mount(body, stepsBar(3),
+      h("p", {}, "Freigabe ", h("code", { class: "share-path" }, st.share.path)),
+      result,
+      h("div", { class: "row wrap", style: { marginTop: "14px", justifyContent: "flex-end" } },
+        h("button", { class: "btn ghost", onClick: () => { clearInterval(timer); step2(); } }, "Zurück"),
+        h("button", { class: "btn primary", onClick: () => { clearInterval(timer); ctx.close(); sharesDialog(); } }, "Fertig")));
+    check(); timer = setInterval(check, 5000);
+  };
+
+  ctx = modal({ title: "Spiele-Freigabe einrichten", wide: true, body, buttons: [{ label: "Abbrechen" }] });
+  step1();
+}
+
 export async function shareWizard() {
+  if (store.mode === "cloud") return cloudShareWizard();
   let info = { clientIp: "", clientIsHostPhone: false, hostAddresses: [] };
   try { info = await api.get("/api/shares/wizard", { silent: true }); } catch { /* ohne Vorbelegung weiter */ }
   const st = {

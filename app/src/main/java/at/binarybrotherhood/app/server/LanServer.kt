@@ -117,6 +117,9 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         Log.i(TAG, "Server gestartet auf Port $port")
     }
 
+    /** Export für den Umzug in die Cloud (wird vom Host-Panel in den Download-Ordner geschrieben). */
+    suspend fun exportJson(): String = repo.exportAll().toString()
+
     fun stop() {
         scanJob?.cancel(); scanJob = null
         engine?.stop(500, 1500)
@@ -277,6 +280,7 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         get("/host") {
             call.respond(HostInfoDto(NetUtils.localAddresses(context), port, sessions.size, BuildConfig.VERSION_NAME, repo.dbPath))
         }
+        get("/export") { call.requireHost(); call.respondText(repo.exportAll().toString(), ContentType.Application.Json) }
 
         // ---- Login
         route("/auth") {

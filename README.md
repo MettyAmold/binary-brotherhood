@@ -33,6 +33,13 @@ Keine Cloud, keine Konten, keine Kosten.
 
 Level-Schwelle: `50 · (n−1) · n` XP. Ränge: Novize (1), Laienbruder (3), Bruder (5), Mönch (8), Prior (11), Abt (15), Erzabt (20), Großmeister (26), Binärer Erleuchteter (33).
 
+## Cloud-Variante (empfohlen für die Vorbereitung vor der LAN)
+
+Derselbe Funktionsumfang läuft als Cloudflare Worker mit D1-Datenbank und ist von überall erreichbar, ohne dass
+das Host-Handy an sein muss. Einrichtung, Deploy über GitHub Actions und Datenumzug vom Handy stehen in
+[cloud/README.md](cloud/README.md). Unterschiede: Admin-Rolle statt Host, Registrierung nur mit Einladungscode,
+Spielordner meldet der PC per Skript, Internet nötig.
+
 ## Bauen und installieren
 
 Voraussetzungen: Android Studio (Ladybug oder neuer) bzw. JDK 17+ und Android SDK 35.

@@ -148,22 +148,25 @@ function registerDialog() {
   const name = input({ placeholder: "Dein Name", maxlength: 40, autocomplete: "nickname" });
   const pw = passwordInput({ placeholder: "mind. 4 Zeichen", autocomplete: "new-password" });
   const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
+  const invite = input({ placeholder: "z. B. K7P2QX9A", autocapitalize: "characters", autocomplete: "off", spellcheck: false });
+  const cloud = store.mode === "cloud";
   modal({
     title: "Neues Profil",
     body: h("div", {},
       h("p", { class: "muted small" }, "Das Passwort schützt dein Profil, damit niemand in deinem Namen abstimmt oder schreibt."),
-      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(pw, pw2)),
+      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(pw, pw2),
+      cloud ? field("Einladungscode", invite, "Bekommst du von einem Admin der Bruderschaft. Das allererste Profil braucht keinen.") : null),
     buttons: [{ label: "Abbrechen" }, { label: "Anlegen", class: "primary", onClick: async () => {
       if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
       if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
       if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
-      const r = await api.post("/api/auth/register", { name: name.value.trim(), password: pw.value });
+      const r = await api.post("/api/auth/register", { name: name.value.trim(), password: pw.value, inviteCode: invite.value.trim() });
       store.applyAuth(r);
       toast(`Willkommen in der Bruderschaft, ${r.member.name}!`, "success");
       init();
     } }],
   });
-  chainEnter([name, pw, pw2]);
+  chainEnter(cloud ? [name, pw, pw2, invite] : [name, pw, pw2]);
 }
 
 /** Menü hinter dem Profil-Chip oben rechts. */
@@ -175,6 +178,8 @@ function profileMenu() {
     body: h("div", { class: "pick-list" },
       h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
+      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
+      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
       h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
     ),
     buttons: [{ label: "Schließen" }],
@@ -200,6 +205,42 @@ export function changePasswordDialog() {
   chainEnter([old, pw, pw2]);
 }
 
+/** Admin: Einladungscode anzeigen, kopieren, neu erzeugen. */
+async function inviteDialog() {
+  const codeEl = h("code", { style: { fontSize: "26px", letterSpacing: ".2em", color: "var(--gold)" } }, "…");
+  const load = async () => { codeEl.textContent = (await api.get("/api/admin/invite")).code; };
+  modal({
+    title: "Einladungscode",
+    body: h("div", { style: { textAlign: "center" } },
+      h("p", { class: "muted small" }, "Wer ein Profil anlegen will, braucht diesen Code. Schick ihn den Kumpels per Chat."),
+      h("div", { style: { margin: "14px 0" } }, codeEl),
+      h("div", { class: "row wrap", style: { justifyContent: "center" } },
+        h("button", { class: "btn", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(codeEl.textContent)) ? "Code kopiert" : "Kopieren nicht möglich", "success"); } }, "Kopieren"),
+        h("button", { class: "btn ghost", onClick: async () => { codeEl.textContent = (await api.post("/api/admin/invite")).code; toast("Neuer Code erzeugt – der alte gilt nicht mehr"); } }, "Neu erzeugen"))),
+    buttons: [{ label: "Schließen" }],
+  });
+  load();
+}
+
+/** Admin: Export-Datei der Android-App einspielen (ersetzt alle Daten). */
+function importDialog() {
+  const file = h("input", { type: "file", accept: "application/json,.json", class: "input" });
+  modal({
+    title: "Daten vom Handy importieren",
+    body: h("div", {},
+      h("p", { class: "small" }, "In der Android-App: Host-Ansicht → „Daten exportieren“. Die Datei landet im Download-Ordner. Hier auswählen."),
+      h("p", { class: "small", style: { color: "#ff9a9a" } }, "Achtung: Alle Daten hier werden durch den Export ersetzt. Passwörter der Mitglieder bleiben gültig, alle Geräte müssen sich neu anmelden."),
+      field("Export-Datei", file)),
+    buttons: [{ label: "Abbrechen" }, { label: "Importieren", class: "primary", onClick: async () => {
+      const f = file.files[0]; if (!f) { toast("Datei fehlt", "error"); return false; }
+      let data; try { data = JSON.parse(await f.text()); } catch { toast("Keine gültige JSON-Datei", "error"); return false; }
+      const r = await api.post("/api/admin/import", data);
+      toast(`${r.rows} Datensätze importiert – bitte neu anmelden`, "success", 6000);
+      setTimeout(() => { store.logout().then(() => location.reload()); }, 1500);
+    } }],
+  });
+}
+
 /** Für schreibende Aktionen: liefert das angemeldete Mitglied (ohne Login gibt es die App nicht). */
 export async function requireMe() {
   if (store.me) return store.me;
@@ -210,6 +251,7 @@ export async function requireMe() {
 async function init() {
   let loggedIn;
   try {
+    await store.loadMode();
     loggedIn = await store.loadSession();
   } catch (e) {
     mount(root, offlineGate());

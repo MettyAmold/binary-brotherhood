@@ -10,3 +10,5 @@
 .cxx
 .playwright-mcp
 /.kotlin
+/cloud/node_modules
+/cloud/.wrangler

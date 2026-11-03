@@ -1,0 +1,26 @@
+# BINARY BROTHERHOOD in der Cloud: Worker (API) + statische Web-App + D1 (SQLite) + Durable Object für Live-Updates
+name = "binary-brotherhood"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+[assets]
+directory = "../app/src/main/assets/web"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "binary-brotherhood"
+# Nach `npx wrangler d1 create binary-brotherhood` die ausgegebene database_id hier eintragen
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+[vars]
+APP_NAME = "BINARY BROTHERHOOD"

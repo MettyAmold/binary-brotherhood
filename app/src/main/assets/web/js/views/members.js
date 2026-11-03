@@ -48,7 +48,7 @@ export async function renderMembers(main, params) {
     const stats = m.stats;
     return h("div", {},
       h("div", { class: "page-head" }, h("a", { class: "btn ghost", href: "#/members" }, "← Alle"), h("h2", {}, "Profil"),
-        mine ? h("span", { class: "chip gold" }, "Dein Profil") : null),
+        mine ? h("span", { class: "chip gold" }, "Dein Profil") : null, m.isAdmin ? h("span", { class: "chip gold" }, "👑 Admin") : null),
       h("div", { class: "card gold" },
         h("div", { class: "profile-head" },
           h("div", { style: { position: "relative" }, onClick: () => { if (canEdit) file.click(); }, title: canEdit ? "Profilbild ändern" : "" }, avatar(m, "xl"),
@@ -65,6 +65,12 @@ export async function renderMembers(main, params) {
               h("button", { class: "btn sm", onClick: () => editMember(m) }, "✎ Bearbeiten"),
               h("button", { class: "btn sm", onClick: () => file.click() }, "📷 Profilbild"),
               mine ? h("button", { class: "btn sm", onClick: changePasswordDialog }, "🔑 Passwort") : null,
+              !mine && store.isAdmin && store.mode === "cloud" ? h("button", { class: "btn sm", onClick: async () => {
+                const makeAdmin = !m.isAdmin;
+                if (await confirmDialog(makeAdmin ? "Zum Admin machen?" : "Admin-Rechte entziehen?", `${m.name} ${makeAdmin ? "darf dann Passwörter zurücksetzen, Mitglieder verwalten und den Einladungscode sehen." : "verliert die Admin-Rechte."}`, { okLabel: makeAdmin ? "Zum Admin machen" : "Entziehen", danger: !makeAdmin })) {
+                  await api.post(`/api/admin/members/${m.id}/admin`, { admin: makeAdmin }); toast(makeAdmin ? "Ist jetzt Admin" : "Admin-Rechte entzogen", "success");
+                }
+              } }, m.isAdmin ? "👑 Admin entziehen" : "👑 Zum Admin machen") : null,
               !mine && store.isHost ? h("button", { class: "btn sm", onClick: async () => {
                 if (await confirmDialog("Passwort zurücksetzen?", `${m.name} wird überall abgemeldet und legt beim nächsten Login ein neues Passwort fest.`, { okLabel: "Zurücksetzen", danger: false })) {
                   await api.post(`/api/auth/reset/${m.id}`); toast("Passwort zurückgesetzt", "success");

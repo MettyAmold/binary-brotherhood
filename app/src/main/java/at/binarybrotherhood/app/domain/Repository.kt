@@ -61,7 +61,13 @@ import at.binarybrotherhood.app.server.TransferDto
 import at.binarybrotherhood.app.server.XpEntryDto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
+import java.util.Base64
 import java.time.LocalDate
 import kotlin.random.Random
 
@@ -133,6 +139,52 @@ class Repository(private val context: Context, private val db: AppDatabase = App
     }
 
     private fun EventEntity.toDto() = EventDto(id, name, year, startDate, days, isCurrent)
+
+    // ---------------------------------------------------------------- Export (Umzug in die Cloud)
+
+    /** Alle Tabellen als JSON im Format "binary-brotherhood/1", das der Cloud-Import versteht. */
+    suspend fun exportAll(): JsonObject {
+        fun row(vararg pairs: Pair<String, Any?>): JsonObject = buildJsonObject {
+            for ((k, v) in pairs) when (v) {
+                null -> put(k, JsonPrimitive(null as String?))
+                is Boolean -> put(k, if (v) 1 else 0)
+                is Number -> put(k, v)
+                else -> put(k, v.toString())
+            }
+        }
+        fun <T> table(list: List<T>, map: (T) -> JsonObject) = JsonArray(list.map(map))
+        val members = db.members().all()
+        val tables = buildJsonObject {
+            put("events", table(db.events().all()) { row("id" to it.id, "name" to it.name, "year" to it.year, "startDate" to it.startDate, "days" to it.days, "isCurrent" to it.isCurrent, "createdAt" to it.createdAt) })
+            put("members", table(members) { row("id" to it.id, "name" to it.name, "motto" to it.motto, "color" to it.color, "hasAvatar" to it.hasAvatar, "createdAt" to it.createdAt, "password" to it.password, "isAdmin" to 0) })
+            put("games", table(db.games().all()) { row("id" to it.id, "name" to it.name, "description" to it.description, "steamUrl" to it.steamUrl, "steamAppId" to it.steamAppId, "imageUrl" to it.imageUrl, "players" to it.players, "addedById" to it.addedById, "selectedForNext" to it.selectedForNext, "createdAt" to it.createdAt, "sharePath" to it.sharePath, "shareId" to it.shareId) })
+            put("shares", table(db.shares().all()) { row("id" to it.id, "path" to it.path, "addedById" to it.addedById, "lastScanAt" to it.lastScanAt, "lastError" to it.lastError, "lastCount" to it.lastCount, "knownFolders" to it.knownFolders, "createdAt" to it.createdAt) })
+            put("sessions", table(db.sessions().all()) { row("id" to it.id, "gameId" to it.gameId, "eventId" to it.eventId, "startedAt" to it.startedAt, "endedAt" to it.endedAt, "chosenBy" to it.chosenBy, "note" to it.note) })
+            put("session_participants", table(db.sessions().allParticipants()) { row("sessionId" to it.sessionId, "memberId" to it.memberId) })
+            put("suggestions", table(db.suggestions().all()) { row("id" to it.id, "scope" to it.scope, "title" to it.title, "description" to it.description, "steamUrl" to it.steamUrl, "steamAppId" to it.steamAppId, "imageUrl" to it.imageUrl, "authorId" to it.authorId, "adoptedGameId" to it.adoptedGameId, "createdAt" to it.createdAt) })
+            put("suggestion_votes", table(db.suggestions().allVotes()) { row("suggestionId" to it.suggestionId, "memberId" to it.memberId, "value" to it.value) })
+            put("suggestion_comments", table(db.suggestions().allComments()) { row("id" to it.id, "suggestionId" to it.suggestionId, "authorId" to it.authorId, "text" to it.text, "createdAt" to it.createdAt) })
+            put("forum_posts", table(db.forum().posts()) { row("id" to it.id, "authorId" to it.authorId, "title" to it.title, "body" to it.body, "pinned" to it.pinned, "createdAt" to it.createdAt) })
+            put("forum_comments", table(db.forum().comments()) { row("id" to it.id, "postId" to it.postId, "authorId" to it.authorId, "body" to it.body, "createdAt" to it.createdAt) })
+            val events = db.events().all()
+            put("attendance", table(events.flatMap { e -> db.costs().attendance(e.id) }) { row("eventId" to it.eventId, "memberId" to it.memberId, "day" to it.day) })
+            put("expenses", table(events.flatMap { e -> db.costs().expenses(e.id) }) { row("id" to it.id, "eventId" to it.eventId, "title" to it.title, "amountCents" to it.amountCents, "paidById" to it.paidById, "day" to it.day, "note" to it.note, "createdAt" to it.createdAt) })
+            put("expense_shares", table(db.costs().allShares()) { row("expenseId" to it.expenseId, "memberId" to it.memberId) })
+            put("payments", table(events.flatMap { e -> db.costs().payments(e.id) }) { row("id" to it.id, "eventId" to it.eventId, "fromId" to it.fromId, "toId" to it.toId, "amountCents" to it.amountCents, "createdAt" to it.createdAt) })
+            put("equipment", table(events.flatMap { e -> db.equipment().byEvent(e.id) }) { row("id" to it.id, "eventId" to it.eventId, "name" to it.name, "category" to it.category, "quantity" to it.quantity, "note" to it.note, "bringerId" to it.bringerId, "done" to it.done, "createdAt" to it.createdAt) })
+            val polls = events.mapNotNull { e -> db.polls().latest(e.id) }
+            put("polls", table(polls) { row("id" to it.id, "eventId" to it.eventId, "open" to it.open, "winnerGameId" to it.winnerGameId, "createdAt" to it.createdAt, "closedAt" to it.closedAt) })
+            put("poll_votes", table(polls.flatMap { p -> db.polls().votes(p.id) }) { row("pollId" to it.pollId, "memberId" to it.memberId, "gameId" to it.gameId) })
+            put("xp_log", table(db.xp().all()) { row("id" to it.id, "memberId" to it.memberId, "type" to it.type, "refId" to it.refId, "amount" to it.amount, "createdAt" to it.createdAt) })
+        }
+        val avatars = buildJsonObject {
+            for (m in members) {
+                val f = avatarFile(m.id)
+                if (m.hasAvatar && f.exists()) put(m.id.toString(), Base64.getEncoder().encodeToString(f.readBytes()))
+            }
+        }
+        return buildJsonObject { put("format", "binary-brotherhood/1"); put("exportedAt", now()); put("tables", tables); put("avatars", avatars) }
+    }
 
     // ---------------------------------------------------------------- Members
 

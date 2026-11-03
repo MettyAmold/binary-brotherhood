@@ -39,7 +39,15 @@ import androidx.compose.ui.unit.sp
 import at.binarybrotherhood.app.server.ServerService
 import at.binarybrotherhood.app.util.NetUtils
 import at.binarybrotherhood.app.util.QrCode
+import android.content.ContentValues
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Overlay mit QR-Code, Adressen und Server-Steuerung für den Host. */
 @Composable
@@ -95,6 +103,25 @@ fun HostPanel(service: ServerService, running: Boolean, clients: Int, onToggleSe
                 Button(onClick = onShare, enabled = url != null, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink)) { Text("Teilen") }
             }
             Spacer(Modifier.height(12.dp))
+            val scope = rememberCoroutineScope()
+            OutlinedButton(onClick = {
+                scope.launch {
+                    val result = runCatching {
+                        val json = service.server.exportJson()
+                        withContext(Dispatchers.IO) {
+                            val values = ContentValues().apply {
+                                put(MediaStore.Downloads.DISPLAY_NAME, "binary-brotherhood-export.json")
+                                put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                            }
+                            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Download-Ordner nicht verfügbar")
+                            context.contentResolver.openOutputStream(uri)!!.use { it.write(json.toByteArray()) }
+                        }
+                    }
+                    Toast.makeText(context, result.fold({ "Export liegt in Downloads: binary-brotherhood-export.json" }, { "Export fehlgeschlagen: ${it.message}" }), Toast.LENGTH_LONG).show()
+                }
+            }) { Text("Daten exportieren (Umzug in die Cloud)") }
+            Spacer(Modifier.height(8.dp))
             Text("Alle Daten liegen nur auf diesem Handy. Backup: Einstellungen → Apps → Daten sichern.", color = Muted, fontSize = 11.sp)
         }
     }
