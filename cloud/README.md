@@ -15,8 +15,14 @@ Den Altbestand übernimmt der Realm `binary-brotherhood` beim ersten Aufruf auto
 - **Art**: `lan` (mit LAN-Party, Anwesenheit, Kosten, Ausrüstung, Freigaben) oder `online` (nur Spiele, Glücksrad,
   Turniere, Vorschläge, Forum, Discord). Der Admin kann die Art unter Profil-Menü → Realm-Einstellungen umschalten.
   LAN-Daten werden dabei nur ausgeblendet.
-- **Login**: Zuerst wählst du den Realm, dann das Profil. Wer einen Realm gründet und das erste Profil anlegt, wird Admin.
-  Direktlink zum Realm: `https://…/?realm=<slug>`.
+- **Konten** (D1 `users`, `user_tokens`, `realm_members`) gelten für alle Realms: Name, Passwort, Farbe, Motto und Avatar.
+  XP, Level und Realm-Admin-Rechte liegen im Realm. Ändert jemand sein Profil in einem Realm, gleicht `pushProfile`
+  es in die anderen Realms ab. Ablauf: Login, dann Realm wählen. Alternativ führt der Einladungslink
+  `https://…/?realm=<slug>&invite=<code>` nach Login oder Registrierung direkt hinein.
+- **Rollen**: Realm-Admin (je Realm) und Super-Admin (Konto). Der Super-Admin darf in jedem Realm alles, tritt ohne
+  Code bei, setzt Passwörter zurück (nur er), verwaltet Konten und löscht Realms (`/api/super/*`).
+- Der Worker prüft das Token und gibt das Konto per Header `X-Auth` an das Realm-Objekt weiter. `/internal/*` ist nur
+  intern erreichbar.
 - Der Client schickt den Realm als Header `X-Realm`. Bilder und Audio schicken ihn als `?realm=` bzw. Cookie `bb_realm`,
   die Freigabe-Skripte als `?realm=`. Ohne Angabe gilt `binary-brotherhood`, damit alte Skripte weiterlaufen.
 

@@ -1,7 +1,7 @@
 // Passwörter (PBKDF2-HMAC-SHA256 über WebCrypto) und Geräte-Tokens, kompatibel zum Format der Android-App
 // ("pbkdf2:<Iterationen>:<Salt-Base64>:<Hash-Base64>"), damit exportierte Hashes weiter gelten.
 import { Db, now } from "./db";
-import { BadRequest, NotFound, Unauthorized } from "./logic";
+import { BadRequest } from "./logic";
 
 // Workers (Free-Tarif) haben wenig CPU-Zeit pro Aufruf; 20.000 Iterationen reichen für eine LAN-Party-App.
 const ITERATIONS = 20_000;
@@ -44,50 +44,13 @@ export function validatePassword(pw: string) {
 }
 
 export interface MemberRow { id: number; name: string; motto: string; color: string; hasAvatar: number; createdAt: number; password: string; isAdmin: number; avatarUpdatedAt: number | null }
-export interface Session { member: MemberRow; tokenHash: string }
+export interface Session { member: MemberRow; auth: { userId: number; name: string; superAdmin: boolean } }
 
-export async function resolveSession(db: Db, token: string | null): Promise<Session | null> {
-  if (!token) return null;
-  const hash = await sha256Hex(token);
-  const t = await db.first<{ memberId: number; lastUsedAt: number }>("SELECT memberId, lastUsedAt FROM auth_tokens WHERE tokenHash = ?", hash);
-  if (!t) return null;
-  const member = await db.first<MemberRow>("SELECT id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt FROM members WHERE id = ?", t.memberId);
-  if (!member) { await db.run("DELETE FROM auth_tokens WHERE tokenHash = ?", hash); return null; }
-  if (now() - t.lastUsedAt > 10 * 60_000) await db.run("UPDATE auth_tokens SET lastUsedAt = ? WHERE tokenHash = ?", now(), hash);
-  return { member, tokenHash: hash };
-}
-
-export async function issueToken(db: Db, memberId: number, device: string): Promise<string> {
-  const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  await db.run("INSERT INTO auth_tokens (tokenHash, memberId, device, createdAt, lastUsedAt) VALUES (?, ?, ?, ?, ?)", await sha256Hex(token), memberId, device.slice(0, 120), now(), now());
-  return token;
-}
-
-/** Login; Profile ohne Passwort legen es beim ersten Login fest. */
-export async function login(db: Db, memberId: number, password: string): Promise<MemberRow> {
-  const m = await db.first<MemberRow>("SELECT * FROM members WHERE id = ?", memberId);
-  if (!m) throw new NotFound("Profil nicht gefunden");
-  if (!m.password) {
-    validatePassword(password);
-    await db.run("UPDATE members SET password = ? WHERE id = ?", await hashPassword(password), m.id);
-  } else if (!(await verifyPassword(password, m.password))) {
-    throw new Unauthorized("Falsches Passwort");
-  }
-  return m;
-}
-
-export async function changePassword(db: Db, memberId: number, oldPw: string, newPw: string) {
-  const m = await db.first<MemberRow>("SELECT * FROM members WHERE id = ?", memberId);
-  if (!m) throw new NotFound("Profil nicht gefunden");
-  if (m.password && !(await verifyPassword(oldPw, m.password))) throw new Unauthorized("Altes Passwort ist falsch");
-  validatePassword(newPw);
-  await db.run("UPDATE members SET password = ? WHERE id = ?", await hashPassword(newPw), memberId);
-  await db.run("DELETE FROM auth_tokens WHERE memberId = ?", memberId);
-}
-
-export async function resetPassword(db: Db, memberId: number) {
-  await db.run("UPDATE members SET password = '' WHERE id = ?", memberId);
-  await db.run("DELETE FROM auth_tokens WHERE memberId = ?", memberId);
+/** Realm-Profil des angemeldeten Kontos (der Worker hat das Token bereits geprüft). */
+export async function resolveMember(db: Db, auth: Session["auth"] | null): Promise<Session | null> {
+  if (!auth) return null;
+  const member = await db.first<MemberRow>("SELECT id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt FROM members WHERE userId = ?", auth.userId);
+  return member ? { member, auth } : null;
 }
 
 export const randomCode = (n = 8) => {

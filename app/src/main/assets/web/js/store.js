@@ -9,6 +9,10 @@ export const store = {
   me: null,
   isHost: false,
   isAdmin: false,
+  /** Darf in allen Realms alles (Konten, Realms verwalten) */
+  isSuperAdmin: false,
+  /** Konto: { user, realms, otherRealms } */
+  account: null,
   /** "cloud" (Cloudflare) oder "lan" (Host-Handy) – steuert z. B. den Freigaben-Assistenten */
   mode: "lan",
   members: [],
@@ -38,23 +42,36 @@ export const store = {
     return day >= 1 && day <= ev.days ? day : null;
   },
 
-  /** Prüft das gespeicherte Token. Liefert true, wenn eine gültige Sitzung besteht. */
-  async loadSession() {
-    if (!getToken()) { this.me = null; return false; }
+  /** Konto zum gespeicherten Token. Liefert false, wenn niemand (mehr) angemeldet ist. */
+  async loadAccount() {
+    if (!getToken()) { this.account = null; return false; }
     try {
-      const s = await api.get("/api/auth/me", { silent: true, noAuthRedirect: true });
-      this.me = s.member; this.isHost = !!s.isHost; this.isAdmin = !!(s.isAdmin ?? s.isHost);
+      this.account = await api.get("/api/account/me", { silent: true, noAuthRedirect: true });
+      this.isSuperAdmin = !!this.account.user.isSuperAdmin;
       return true;
     } catch (e) {
-      if (e.status === 401 || e.status === 403) { setToken(null); this.me = null; return false; }
-      throw e; // Host nicht erreichbar
+      if (e.status === 401) { setToken(null); this.account = null; return false; }
+      throw e; // Server nicht erreichbar
     }
   },
 
-  applyAuth(resp) {
-    setToken(resp.token);
-    this.me = resp.member; this.isHost = !!resp.isHost; this.isAdmin = !!(resp.isAdmin ?? resp.isHost);
-    emit("me");
+  /** Profil im gewählten Realm: "ok", "notMember" oder "noLogin". */
+  async loadSession() {
+    if (!getToken()) { this.me = null; return "noLogin"; }
+    try {
+      const s = await api.get("/api/auth/me", { silent: true, noAuthRedirect: true });
+      this.me = s.member; this.isHost = !!s.isHost; this.isAdmin = !!s.isAdmin; this.isSuperAdmin = !!s.isSuperAdmin;
+      return "ok";
+    } catch (e) {
+      if (e.status === 403) { this.me = null; return "notMember"; }
+      if (e.status === 401) { setToken(null); this.me = null; return "noLogin"; }
+      throw e;
+    }
+  },
+
+  applyAccount(resp) {
+    if (resp.token) setToken(resp.token);
+    if (resp.user) { this.account = { user: resp.user, realms: resp.realms, otherRealms: resp.otherRealms }; this.isSuperAdmin = !!resp.user.isSuperAdmin; }
   },
 
   async loadMode() {
@@ -62,9 +79,9 @@ export const store = {
   },
 
   async logout() {
-    try { await api.post("/api/auth/logout", {}, { silent: true, noAuthRedirect: true }); } catch { /* egal */ }
+    try { await api.post("/api/account/logout", {}, { silent: true, noAuthRedirect: true }); } catch { /* egal */ }
     setToken(null);
-    this.me = null; this.isHost = false; this.isAdmin = false;
+    this.me = null; this.account = null; this.isHost = false; this.isAdmin = false; this.isSuperAdmin = false;
     emit("me");
   },
 

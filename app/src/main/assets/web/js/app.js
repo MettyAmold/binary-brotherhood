@@ -249,25 +249,115 @@ function showPasswordToggle(...inputs) {
 }
 
 const KIND_LABEL = { lan: "🖥️ LAN-Party", online: "🌐 Online-Spielesuche" };
+const gateHero = () => h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD"));
+const errLine = (message) => message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null;
 
-/** Erster Schritt beim Login: Realm wählen oder neu gründen. Jeder Realm ist eine eigene Gruppe. */
-async function renderRealmPicker(message) {
-  let realms = [];
-  try { realms = await api.get("/api/realms", { silent: true }); } catch { mount(root, offlineGate()); return; }
-  const choose = (r) => { setRealm(r.slug); renderLogin(); };
+// ---------- Einladungslink: /?realm=<slug>&invite=<code> – wird nach Login/Registrierung eingelöst ----------
+function pendingInvite() { try { return JSON.parse(localStorage.getItem("bb.invite") || "null"); } catch { return null; } }
+function setPendingInvite(v) { try { v ? localStorage.setItem("bb.invite", JSON.stringify(v)) : localStorage.removeItem("bb.invite"); } catch { /* privat */ } }
+
+/** Schritt 1: mit Konto anmelden (gilt für alle Realms) oder Konto anlegen. */
+export async function renderLogin(message) {
+  const inv = pendingInvite();
+  let invName = "";
+  if (inv) try { invName = (await api.get("/api/realms", { silent: true })).find(r => r.slug === inv.realm)?.name || ""; } catch { /* egal */ }
+  const name = input({ placeholder: "Dein Name", autocomplete: "username", autocapitalize: "off", spellcheck: false });
+  const pw = passwordInput({ placeholder: "Passwort" });
+  const submit = async () => {
+    if (!name.value.trim() || !pw.value) { toast("Name und Passwort eingeben", "error"); return; }
+    const r = await api.post("/api/account/login", { name: name.value.trim(), password: pw.value }, { noAuthRedirect: true });
+    store.applyAccount(r);
+    toast(`Willkommen zurück, ${r.user.name}!`, "success");
+    init();
+  };
+  const enter = (e) => { if (e.key === "Enter") { e.preventDefault(); e.target === name ? pw.focus() : submit(); } };
+  name.addEventListener("keydown", enter); pw.addEventListener("keydown", enter);
   mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
-    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
-    message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null,
-    h("p", { class: "muted small" }, "Wähle deinen Realm. Jeder Realm ist eine eigene Gruppe mit eigenen Mitgliedern, Spielen und Forum."),
-    h("div", { class: "pick-list" }, realms.length
-      ? realms.map(r => h("div", { class: "it", onClick: () => choose(r) },
-          h("div", { class: "grow" }, h("div", {}, r.name), h("div", { class: "small muted" }, KIND_LABEL[r.kind] || r.kind)),
-          h("span", { class: "muted" }, "›")))
-      : h("div", { class: "muted small" }, "Noch keine Realms. Gründe den ersten!")),
+    gateHero(),
+    errLine(message),
+    inv ? h("div", { class: "card", style: { padding: "10px 12px", marginBottom: "10px", borderColor: "var(--gold)" } },
+      h("strong", {}, `✉️ Einladung in „${invName || inv.realm}“`),
+      h("div", { class: "small muted" }, "Melde dich an oder lege ein Konto an – danach bist du direkt drin.")) : null,
+    h("p", { class: "muted small" }, "Ein Konto für alle Realms. XP und Level sammelst du in jedem Realm getrennt."),
+    field("Name", name), field("Passwort", pw), showPasswordToggle(pw),
+    h("button", { class: "btn primary block", style: { marginTop: "8px" }, onClick: submit }, "Anmelden"),
+    h("p", { class: "small muted", style: { marginTop: "6px" } }, "Noch kein Passwort (alter Account oder vom Super-Admin zurückgesetzt)? Einfach ein neues eingeben – es wird beim ersten Login festgelegt."),
+    h("hr", { class: "sep" }),
+    h("button", { class: "btn block", onClick: registerDialog }, "Konto anlegen"),
+    inAndroidApp ? null : h("div", { style: { marginTop: "10px" } }, apkLink("btn ghost block"), h("div", { class: "small muted", style: { textAlign: "center", marginTop: "4px" } }, "Für Handy und Tablet, mit Update-Funktion. Beim Installieren „Unbekannte Quellen“ erlauben.")),
+  )));
+  setTimeout(() => name.focus(), 50);
+}
+
+function registerDialog() {
+  const name = input({ placeholder: "Dein Name", maxlength: 40, autocomplete: "username" });
+  const pw = passwordInput({ placeholder: "mind. 4 Zeichen", autocomplete: "new-password" });
+  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
+  modal({
+    title: "Konto anlegen",
+    body: h("div", {},
+      h("p", { class: "muted small" }, "Mit dem Konto meldest du dich in allen Realms an. Um einem Realm beizutreten, brauchst du danach einen Einladungslink oder -code von dessen Admin."),
+      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(pw, pw2)),
+    buttons: [{ label: "Abbrechen" }, { label: "Anlegen", class: "primary", onClick: async () => {
+      if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
+      if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
+      if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
+      const r = await api.post("/api/account/register", { name: name.value.trim(), password: pw.value }, { noAuthRedirect: true });
+      store.applyAccount(r);
+      toast(`Willkommen, ${r.user.name}!`, "success");
+      init();
+    } }],
+  });
+  chainEnter([name, pw, pw2]);
+}
+
+/** Schritt 2: Realm wählen, beitreten oder gründen. */
+async function renderRealmPicker(message) {
+  if (!store.account) { renderLogin(message); return; }
+  try { await store.loadAccount(); } catch { mount(root, offlineGate()); return; }
+  if (!store.account) { renderLogin(); return; }
+  const { user, realms, otherRealms } = store.account;
+  const enterRealm = (slug) => { setRealm(slug); init(); };
+  const row = (r, onClick, extra) => h("div", { class: "it", onClick },
+    h("div", { class: "grow" }, h("div", {}, r.name), h("div", { class: "small muted" }, KIND_LABEL[r.kind] || r.kind)), extra || h("span", { class: "muted" }, "›"));
+  mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
+    gateHero(),
+    errLine(message),
+    h("div", { class: "row between", style: { marginBottom: "8px" } },
+      h("div", { class: "row" }, avatar({ id: user.id, name: user.name, color: user.color, hasAvatar: user.hasAvatar, avatarUrl: `/api/account/avatar/${user.id}` }, "sm"),
+        h("div", {}, h("strong", {}, user.name), user.isSuperAdmin ? h("div", { class: "small", style: { color: "var(--gold)" } }, "Super-Admin") : null)),
+      h("button", { class: "btn sm ghost", onClick: async () => { await store.logout(); renderLogin(); } }, "Abmelden")),
+    h("div", { class: "small muted", style: { margin: "6px 0" } }, "Deine Realms"),
+    h("div", { class: "pick-list" }, realms.length ? realms.map(r => row(r, () => enterRealm(r.slug)))
+      : h("div", { class: "muted small" }, "Du bist noch in keinem Realm. Tritt einem bei (Einladungscode) oder gründe einen.")),
+    otherRealms.length ? h("div", { class: "small muted", style: { margin: "14px 0 6px" } }, user.isSuperAdmin ? "Weitere Realms (als Super-Admin ohne Code)" : "Weitere Realms") : null,
+    otherRealms.length ? h("div", { class: "pick-list" }, otherRealms.map(r => row(r, () => joinDialog(r), h("span", { class: "chip" }, "Beitreten")))) : null,
     h("hr", { class: "sep" }),
     h("button", { class: "btn block", onClick: createRealmDialog }, "Neuen Realm gründen"),
-    inAndroidApp ? null : h("div", { style: { marginTop: "10px" } }, apkLink("btn ghost block")),
+    user.isSuperAdmin ? h("button", { class: "btn ghost block", style: { marginTop: "8px" }, onClick: superAdminDialog }, "🛡️ Verwaltung: alle Konten und Realms") : null,
+    h("button", { class: "btn ghost block", style: { marginTop: "8px" }, onClick: changePasswordDialog }, "🔑 Passwort ändern"),
   )));
+}
+
+/** Beitreten: Super-Admins direkt, sonst mit Einladungscode. */
+async function joinDialog(r) {
+  const doJoin = async (code) => {
+    await api.post(`/api/realms/${encodeURIComponent(r.slug)}/join`, { inviteCode: code });
+    toast(`Willkommen in „${r.name}“!`, "success");
+    setRealm(r.slug); init();
+  };
+  if (store.isSuperAdmin) { await doJoin(""); return; }
+  const code = input({ placeholder: "z. B. K7P2QX9A", autocapitalize: "characters", autocomplete: "off", spellcheck: false });
+  modal({
+    title: `„${r.name}“ beitreten`,
+    body: h("div", {}, h("p", { class: "muted small" }, "Den Einladungscode bekommst du von einem Admin des Realms (Profil-Menü → Einladungscode)."), field("Einladungscode", code)),
+    buttons: [{ label: "Abbrechen" }, { label: "Beitreten", class: "primary", onClick: async () => {
+      if (!code.value.trim()) { toast("Code fehlt", "error"); return false; }
+      await doJoin(code.value.trim());
+    } }],
+  });
+  chainEnter([code]);
+  setTimeout(() => code.focus(), 50);
 }
 
 function kindPicker(current = "lan") {
@@ -288,15 +378,13 @@ function createRealmDialog() {
   modal({
     title: "Neuen Realm gründen",
     body: h("div", {},
-      h("p", { class: "muted small" }, "Ein Realm ist komplett unabhängig von den anderen. Wer das erste Profil anlegt, wird Admin und verteilt den Einladungscode."),
+      h("p", { class: "muted small" }, "Ein Realm ist komplett unabhängig von den anderen. Du wirst sein Admin und lädst die anderen per Einladungslink ein."),
       field("Name", name), h("div", { class: "field" }, h("label", {}, "Art"), kind.el)),
     buttons: [{ label: "Abbrechen" }, { label: "Gründen", class: "primary", onClick: async () => {
       if (name.value.trim().length < 3) { toast("Der Name braucht mindestens 3 Zeichen", "error"); return false; }
       const r = await api.post("/api/realms", { name: name.value.trim(), kind: kind.value() });
-      setRealm(r.slug);
-      toast(`Realm „${r.name}“ gegründet – leg jetzt dein Profil an`, "success", 5000);
-      await renderLogin();
-      registerDialog();
+      toast(`Realm „${r.name}“ gegründet – du bist Admin`, "success", 5000);
+      setRealm(r.slug); init();
     } }],
   });
   chainEnter([name]);
@@ -307,15 +395,11 @@ function createRealmDialog() {
 function realmSettingsDialog() {
   const name = input({ value: store.realm?.name || "", maxlength: 60 });
   const kind = kindPicker(store.realm?.kind || "lan");
-  const link = `${location.origin}/?realm=${encodeURIComponent(currentRealm())}`;
   modal({
     title: "Realm-Einstellungen",
     body: h("div", {},
       field("Name", name), h("div", { class: "field" }, h("label", {}, "Art"), kind.el),
-      h("p", { class: "small muted" }, "Beim Umschalten auf „Online“ werden LAN-Daten nur ausgeblendet, nicht gelöscht."),
-      h("div", { class: "field" }, h("label", {}, "Direktlink zum Realm"),
-        h("div", { class: "row" }, h("code", { class: "grow small", style: { wordBreak: "break-all" } }, link),
-          h("button", { class: "btn sm", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(link)) ? "Link kopiert" : "Kopieren nicht möglich", "success"); } }, "Kopieren")))),
+      h("p", { class: "small muted" }, "Beim Umschalten auf „Online“ werden LAN-Daten nur ausgeblendet, nicht gelöscht. Neue Leute lädst du über Profil-Menü → Einladungslink ein.")),
     buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
       store.realm = await api.put("/api/realm", { name: name.value.trim(), kind: kind.value() });
       store.appName = store.realm.name;
@@ -325,98 +409,49 @@ function realmSettingsDialog() {
   });
 }
 
-/** Realm wechseln: Anmeldung je Realm bleibt gespeichert, also ist der Rückweg ohne Passwort möglich. */
+/** Super-Admin: alle Konten (Passwort zurücksetzen, Super-Admin, löschen) und Realms (löschen). */
+async function superAdminDialog() {
+  const body = h("div", {});
+  const load = async () => {
+    const d = await api.get("/api/super/overview");
+    const realmName = Object.fromEntries(d.realms.map(r => [r.slug, r.name]));
+    const me = store.account?.user?.id;
+    mount(body,
+      h("h3", { style: { fontSize: "15px" } }, `Konten (${d.users.length})`),
+      h("div", { class: "pick-list" }, d.users.map(u => h("div", { class: "it", style: { alignItems: "flex-start" } },
+        avatar({ id: u.id, name: u.name, color: u.color, hasAvatar: u.hasAvatar, avatarUrl: `/api/account/avatar/${u.id}` }, "sm"),
+        h("div", { class: "grow" },
+          h("div", {}, u.name, " ", u.isSuperAdmin ? h("span", { class: "chip gold" }, "Super-Admin") : null, !u.hasPassword ? h("span", { class: "chip" }, "ohne Passwort") : null),
+          h("div", { class: "small muted" }, u.realms.length ? u.realms.map(s => realmName[s] || s).join(", ") : "in keinem Realm"),
+          h("div", { class: "row wrap", style: { marginTop: "6px" } },
+            h("button", { class: "btn sm", onClick: async () => { if (await confirmDialog("Passwort zurücksetzen?", `${u.name} wird überall abgemeldet und legt beim nächsten Login ein neues Passwort fest.`, { okLabel: "Zurücksetzen", danger: false })) { await api.post(`/api/super/users/${u.id}/reset`); toast("Passwort zurückgesetzt", "success"); load(); } } }, "🔑 Zurücksetzen"),
+            h("button", { class: "btn sm", onClick: async () => { await api.post(`/api/super/users/${u.id}/super`, { on: !u.isSuperAdmin }); toast(u.isSuperAdmin ? "Super-Admin entzogen" : "Ist jetzt Super-Admin", "success"); if (u.id === me && u.isSuperAdmin) location.reload(); else load(); } }, u.isSuperAdmin ? "Super-Admin entziehen" : "Zum Super-Admin"),
+            u.id !== me ? h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Konto löschen?", `${u.name} wird aus allen Realms entfernt (XP inklusive). Beiträge bleiben.`, { okLabel: "Löschen" })) { await api.del(`/api/super/users/${u.id}`); toast("Konto gelöscht", "success"); load(); } } }, "Löschen") : null))))),
+      h("h3", { style: { fontSize: "15px", marginTop: "16px" } }, `Realms (${d.realms.length})`),
+      h("div", { class: "pick-list" }, d.realms.map(r => h("div", { class: "it" },
+        h("div", { class: "grow" }, h("div", {}, r.name), h("div", { class: "small muted" }, `${KIND_LABEL[r.kind] || r.kind} · ${r.members} Mitglied${r.members === 1 ? "" : "er"}`)),
+        r.legacy ? h("span", { class: "chip" }, "erster Realm") : h("button", { class: "btn sm ghost danger", onClick: async () => {
+          if (await confirmDialog(`„${r.name}“ löschen?`, "Alle Daten dieses Realms (Spiele, Forum, XP, Turniere …) werden endgültig gelöscht. Die Konten bleiben.", { okLabel: "Endgültig löschen" })) {
+            await api.del(`/api/super/realms/${encodeURIComponent(r.slug)}`); toast("Realm gelöscht", "success");
+            if (r.slug === currentRealm()) { setRealm(""); location.href = location.pathname; } else load();
+          }
+        } }, "Löschen")))));
+  };
+  modal({ title: "Verwaltung", wide: true, body, buttons: [{ label: "Schließen" }] });
+  load();
+}
+
+/** Realm wechseln: zurück zur Realm-Auswahl, das Konto bleibt angemeldet. */
 function switchRealm() {
   setRealm("");
   location.href = location.pathname; // frisch laden: Live-Verbindung und Daten gehören zum Realm
 }
 
-/** Login-Bildschirm: Profil wählen und Passwort eingeben oder neues Profil anlegen. */
-export async function renderLogin(message) {
-  if (!currentRealm()) { renderRealmPicker(message); return; }
-  let members = [];
-  try {
-    members = await api.get("/api/auth/members", { silent: true });
-  } catch (e) {
-    if (e.status === 404) { setRealm(""); renderRealmPicker("Diesen Realm gibt es nicht (mehr)."); return; }
-    mount(root, offlineGate());
-    return;
-  }
-  let realmName = "";
-  try { const host = await api.get("/api/host", { silent: true }); realmName = host.realm?.name || ""; store.mode = host.mode === "cloud" ? "cloud" : "lan"; } catch { /* egal */ }
-  const list = h("div", { class: "pick-list" }, members.length
-    ? members.map(m => h("div", { class: "it", onClick: () => loginDialog(m) },
-        avatar(m, "sm"), h("div", { class: "grow" }, h("div", {}, m.name), !m.hasPassword ? h("div", { class: "small muted" }, "noch kein Passwort – beim ersten Login festlegen") : null),
-        h("span", { class: "muted" }, "›")))
-    : h("div", { class: "muted small" }, "Noch keine Profile. Lege das erste an!"));
-  mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
-    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
-    message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null,
-    h("div", { class: "row between", style: { marginBottom: "8px" } },
-      h("div", {}, h("div", { class: "small muted" }, "Realm"), h("strong", {}, realmName || currentRealm())),
-      h("button", { class: "btn sm ghost", onClick: () => { setRealm(""); renderRealmPicker(); } }, "Wechseln")),
-    h("p", { class: "muted small" }, "Wer bist du? Melde dich mit deinem Profil an."),
-    list,
-    h("hr", { class: "sep" }),
-    h("button", { class: "btn primary block", onClick: registerDialog }, "Neues Profil anlegen"),
-    inAndroidApp ? null : h("div", { style: { marginTop: "10px" } }, apkLink("btn ghost block"), h("div", { class: "small muted", style: { textAlign: "center", marginTop: "4px" } }, "Für Handy und Tablet, mit Update-Funktion. Beim Installieren „Unbekannte Quellen“ erlauben.")),
-  )));
-}
-
 function offlineGate() {
   return h("div", { class: "gate" }, h("div", { class: "card" },
-    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
+    gateHero(),
     h("p", { class: "muted" }, "Der Server antwortet nicht. Bist du online?"),
     h("button", { class: "btn primary block", onClick: () => location.reload() }, "Erneut versuchen")));
-}
-
-function loginDialog(m) {
-  const pw = passwordInput({ placeholder: m.hasPassword ? "Passwort" : "Neues Passwort (mind. 4 Zeichen)", autocomplete: m.hasPassword ? "current-password" : "new-password" });
-  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
-  const submit = async (ctx) => {
-    if (!m.hasPassword && pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
-    if (!pw.value) { toast("Passwort fehlt", "error"); return false; }
-    const r = await api.post("/api/auth/login", { memberId: m.id, password: pw.value }, { noAuthRedirect: true });
-    store.applyAuth(r);
-    toast(`Willkommen zurück, ${r.member.name}!`, "success");
-    init();
-  };
-  modal({
-    title: `Anmelden als ${m.name}`,
-    body: h("div", {},
-      !m.hasPassword ? h("p", { class: "muted small" }, "Dieses Profil hat noch kein Passwort. Lege jetzt eines fest – es gilt ab sofort für alle Geräte.") : null,
-      field(m.hasPassword ? "Passwort" : "Neues Passwort", pw),
-      !m.hasPassword ? field("Wiederholen", pw2) : null,
-      showPasswordToggle(pw, pw2)),
-    buttons: [{ label: "Abbrechen" }, { label: m.hasPassword ? "Anmelden" : "Festlegen und anmelden", class: "primary", onClick: submit }],
-  });
-  chainEnter(m.hasPassword ? [pw] : [pw, pw2]);
-  setTimeout(() => pw.focus(), 50);
-}
-
-function registerDialog() {
-  const name = input({ placeholder: "Dein Name", maxlength: 40, autocomplete: "nickname" });
-  const pw = passwordInput({ placeholder: "mind. 4 Zeichen", autocomplete: "new-password" });
-  const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
-  const invite = input({ placeholder: "z. B. K7P2QX9A", autocapitalize: "characters", autocomplete: "off", spellcheck: false });
-  const cloud = store.mode === "cloud";
-  modal({
-    title: "Neues Profil",
-    body: h("div", {},
-      h("p", { class: "muted small" }, "Das Passwort schützt dein Profil, damit niemand in deinem Namen abstimmt oder schreibt."),
-      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(pw, pw2),
-      cloud ? field("Einladungscode", invite, "Bekommst du von einem Admin der Bruderschaft. Das allererste Profil braucht keinen.") : null),
-    buttons: [{ label: "Abbrechen" }, { label: "Anlegen", class: "primary", onClick: async () => {
-      if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
-      if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
-      if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
-      const r = await api.post("/api/auth/register", { name: name.value.trim(), password: pw.value, inviteCode: invite.value.trim() });
-      store.applyAuth(r);
-      toast(`Willkommen in der Bruderschaft, ${r.member.name}!`, "success");
-      init();
-    } }],
-  });
-  chainEnter(cloud ? [name, pw, pw2, invite] : [name, pw, pw2]);
 }
 
 /** Menü hinter dem Profil-Chip oben rechts. */
@@ -434,11 +469,12 @@ function profileMenu() {
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); discordSettingsDialog(); } }, h("span", {}, "💬"), h("span", { class: "grow" }, "Discord-Server")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); showChangelog(false); } }, h("span", {}, "📜"), h("span", { class: "grow" }, "Änderungsprotokoll")) : null,
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
-      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
+      store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungslink")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
       inAndroidApp ? null : h("a", { class: "it", href: APK_URL, rel: "noopener", style: { textDecoration: "none", color: "inherit" } }, h("span", {}, "📱"), h("span", { class: "grow" }, "Android-App herunterladen")),
+      store.isSuperAdmin ? h("div", { class: "it", onClick: () => { ctx.close(); superAdminDialog(); } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Verwaltung (alle Realms)")) : null,
       h("div", { class: "it", onClick: () => { ctx.close(); switchRealm(); } }, h("span", {}, "🌐"), h("span", { class: "grow" }, "Realm wechseln"), h("span", { class: "small muted" }, store.realm?.name || "")),
-      h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
+      h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); setRealm(""); location.href = location.pathname; } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
     ),
     buttons: [{ label: "Schließen" }],
   });
@@ -451,12 +487,12 @@ export function changePasswordDialog() {
   modal({
     title: "Passwort ändern",
     body: h("div", {}, field("Aktuelles Passwort", old), field("Neues Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(old, pw, pw2),
-      h("p", { class: "muted small" }, "Andere Geräte werden abgemeldet.")),
+      h("p", { class: "muted small" }, "Gilt für alle Realms. Andere Geräte werden abgemeldet.")),
     buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
       if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
       if (pw.value !== pw2.value) { toast("Die Passwörter stimmen nicht überein", "error"); return false; }
-      const r = await api.post("/api/auth/password", { oldPassword: old.value, newPassword: pw.value }, { noAuthRedirect: true });
-      store.applyAuth(r);
+      const r = await api.post("/api/account/password", { oldPassword: old.value, newPassword: pw.value }, { noAuthRedirect: true });
+      store.applyAccount(r);
       toast("Passwort geändert", "success");
     } }],
   });
@@ -528,16 +564,20 @@ async function soundsDialog() {
 /** Admin: Einladungscode anzeigen, kopieren, neu erzeugen. */
 async function inviteDialog() {
   const codeEl = h("code", { style: { fontSize: "26px", letterSpacing: ".2em", color: "var(--gold)" } }, "…");
-  const load = async () => { codeEl.textContent = (await api.get("/api/admin/invite")).code; };
+  const linkEl = h("code", { class: "small", style: { wordBreak: "break-all" } }, "…");
+  const inviteLink = (code) => `${location.origin}/?realm=${encodeURIComponent(currentRealm())}&invite=${encodeURIComponent(code)}`;
+  const show = (code) => { codeEl.textContent = code; linkEl.textContent = inviteLink(code); };
+  const load = async () => show((await api.get("/api/admin/invite")).code);
   modal({
-    title: "Einladungscode",
+    title: "Einladungslink",
     body: h("div", { style: { textAlign: "center" } },
-      h("p", { class: "muted small" }, "Wer ein Profil anlegen will, braucht diesen Code. Schick ihn zusammen mit dem Link zum Realm per Chat:"),
-      h("code", { class: "small", style: { wordBreak: "break-all" } }, `${location.origin}/?realm=${encodeURIComponent(currentRealm())}`),
+      h("p", { class: "muted small" }, "Schick den Einladungslink per Chat: Wer ihn öffnet, meldet sich an (oder legt ein Konto an) und ist direkt im Realm. Wer schon ein Konto hat, kann auch nur den Code unter „Realm wechseln → Beitreten“ eingeben."),
+      h("div", { class: "card", style: { padding: "8px 10px" } }, linkEl),
+      h("button", { class: "btn primary", style: { marginTop: "8px" }, onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(linkEl.textContent)) ? "Link kopiert" : "Kopieren nicht möglich", "success"); } }, "Link kopieren"),
       h("div", { style: { margin: "14px 0" } }, codeEl),
       h("div", { class: "row wrap", style: { justifyContent: "center" } },
-        h("button", { class: "btn", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(codeEl.textContent)) ? "Code kopiert" : "Kopieren nicht möglich", "success"); } }, "Kopieren"),
-        h("button", { class: "btn ghost", onClick: async () => { codeEl.textContent = (await api.post("/api/admin/invite")).code; toast("Neuer Code erzeugt – der alte gilt nicht mehr"); } }, "Neu erzeugen"))),
+        h("button", { class: "btn", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(codeEl.textContent)) ? "Code kopiert" : "Kopieren nicht möglich", "success"); } }, "Code kopieren"),
+        h("button", { class: "btn ghost", onClick: async () => { show((await api.post("/api/admin/invite")).code); toast("Neuer Code erzeugt – alter Code und Link gelten nicht mehr"); } }, "Neu erzeugen"))),
     buttons: [{ label: "Schließen" }],
   });
   load();
@@ -582,19 +622,31 @@ export async function requireMe() {
 }
 
 async function init() {
-  const linkRealm = new URLSearchParams(location.search).get("realm");
-  if (linkRealm) { setRealm(linkRealm.toLowerCase()); history.replaceState(null, "", location.pathname + location.hash); }
-  if (!currentRealm()) { renderRealmPicker(); return; }
-  let loggedIn;
-  try {
-    await store.loadMode();
-    loggedIn = await store.loadSession();
-  } catch (e) {
-    mount(root, offlineGate());
-    return;
+  // Einladungslink oder Direktlink: /?realm=<slug>[&invite=<code>]
+  const q = new URLSearchParams(location.search);
+  if (q.get("realm")) {
+    const slug = q.get("realm").toLowerCase();
+    if (q.get("invite")) setPendingInvite({ realm: slug, code: q.get("invite") });
+    setRealm(slug);
+    history.replaceState(null, "", location.pathname + location.hash);
   }
-  if (!loggedIn) { renderLogin(); return; }
   try {
+    if (!(await store.loadAccount())) { renderLogin(); return; }
+    // Offene Einladung einlösen
+    const inv = pendingInvite();
+    if (inv) {
+      setPendingInvite(null);
+      if (!store.account.realms.some(r => r.slug === inv.realm)) {
+        try { const r = await api.post(`/api/realms/${encodeURIComponent(inv.realm)}/join`, { inviteCode: inv.code }, { silent: true }); toast(`Willkommen in „${r.name}“!`, "success"); await store.loadAccount(); }
+        catch (e) { setRealm(""); renderRealmPicker(`Einladung ungültig: ${e.message}`); return; }
+      }
+      setRealm(inv.realm);
+    }
+    if (!currentRealm() || !store.account.realms.some(r => r.slug === currentRealm())) { setRealm(""); renderRealmPicker(); return; }
+    await store.loadMode();
+    const st = await store.loadSession();
+    if (st === "noLogin") { renderLogin(); return; }
+    if (st === "notMember") { setRealm(""); renderRealmPicker(); return; }
     await store.bootstrap();
   } catch (e) {
     mount(root, offlineGate());
@@ -609,7 +661,7 @@ async function init() {
 
 window.addEventListener("bb:unauthorized", () => {
   if (!store.me) return;
-  store.me = null; store.isHost = false;
+  store.me = null; store.isHost = false; store.account = null;
   renderLogin("Deine Sitzung ist abgelaufen, bitte melde dich neu an.");
 });
 

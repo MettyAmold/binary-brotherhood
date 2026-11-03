@@ -12,7 +12,10 @@ let realm = (() => {
   if (fromUrl) return fromUrl.toLowerCase();
   try {
     // Wer schon vor den Realms angemeldet war, landet ohne Nachfrage im ersten Realm
-    return localStorage.getItem("bb.realm") || (localStorage.getItem("bb.token") ? LEGACY_REALM : "");
+    // (nur solange noch nie ein Realm gewählt wurde – „Realm wechseln“ speichert bewusst einen leeren Wert)
+    const stored = localStorage.getItem("bb.realm");
+    if (stored !== null) return stored;
+    return localStorage.getItem("bb.token") ? LEGACY_REALM : "";
   } catch { return ""; }
 })();
 
@@ -20,7 +23,7 @@ let realm = (() => {
 export function currentRealm() { return realm; }
 export function setRealm(slug) {
   realm = slug || "";
-  try { realm ? localStorage.setItem("bb.realm", realm) : localStorage.removeItem("bb.realm"); } catch { /* privat */ }
+  try { localStorage.setItem("bb.realm", realm); } catch { /* privat */ }
   syncRealmCookie();
 }
 /** Bilder, Audio und Medien laden ohne eigene Header – dafür zeigt ein Cookie dem Server den Realm. */
@@ -31,23 +34,19 @@ syncRealmCookie();
 // Mehrere Tabs mit verschiedenen Realms: beim Zurückkehren den eigenen wieder setzen
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncRealmCookie(); });
 
-/** Login-Token je Realm; das alte, realm-lose Token gehört zum ersten Realm. */
-const tokenKey = () => `bb.token.${realm}`;
+/** Ein Login-Token für alle Realms (Konto). Ältere Stände speicherten es je Realm – einmalig übernehmen. */
 export function getToken() {
-  if (!realm) return "";
   try {
-    const t = localStorage.getItem(tokenKey());
-    if (t) return t;
-    if (realm === LEGACY_REALM) return localStorage.getItem("bb.token") || "";
-  } catch { /* privat */ }
-  return "";
+    let t = localStorage.getItem("bb.token");
+    if (!t) {
+      t = localStorage.getItem(`bb.token.${LEGACY_REALM}`) || "";
+      if (t) { localStorage.setItem("bb.token", t); localStorage.removeItem(`bb.token.${LEGACY_REALM}`); }
+    }
+    return t || "";
+  } catch { return ""; }
 }
 export function setToken(t) {
-  if (!realm) return;
-  try {
-    t ? localStorage.setItem(tokenKey(), t) : localStorage.removeItem(tokenKey());
-    if (realm === LEGACY_REALM) localStorage.removeItem("bb.token");
-  } catch { /* privater Modus */ }
+  try { t ? localStorage.setItem("bb.token", t) : localStorage.removeItem("bb.token"); } catch { /* privater Modus */ }
 }
 
 export function authHeaders() {

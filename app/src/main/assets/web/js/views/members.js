@@ -1,6 +1,6 @@
 // Mitglieder: Profile, Avatar-Upload, XP, Level und Rang.
 import { h, mount, modal, confirmDialog, avatar, empty, fmtDate, toast, input, field, resizeImage, timeAgo } from "../ui.js";
-import { api, authHeaders } from "../api.js";
+import { api, authHeaders, setRealm } from "../api.js";
 import { store, on } from "../store.js";
 import { changePasswordDialog } from "../app.js";
 
@@ -27,7 +27,9 @@ export async function renderMembers(main, params) {
 
   const profile = (m) => {
     const mine = store.me && store.me.id === m.id;
-    const canEdit = mine || store.isHost;
+    // Profil (Name, Bild, Motto) gilt in allen Realms: nur Inhaber oder Super-Admin. Admin-Rechte/Entfernen: Realm-Admins.
+    const canEdit = mine || store.isSuperAdmin;
+    const canManage = canEdit || store.isAdmin;
     const log = h("div", { class: "xp-log" }, h("div", { class: "muted small" }, "Lade …"));
     api.get(`/api/members/${m.id}/xp`).then(entries => mount(log, entries.length ? entries.map(e => h("div", { class: "it" }, h("span", {}, e.label), h("span", { class: "muted small" }, timeAgo(e.createdAt)), h("strong", { class: "gold" }, `+${e.amount}`))) : h("div", { class: "muted small" }, "Noch keine XP – spiel mit, schreib was, bring was mit!"))).catch(() => {});
     const file = h("input", { type: "file", accept: "image/*", class: "hidden", onChange: async () => {
@@ -61,27 +63,27 @@ export async function renderMembers(main, params) {
             h("div", { style: { marginTop: "10px" } },
               h("div", { class: "row between small muted" }, h("span", {}, `${m.xp} XP`), h("span", {}, `Level ${m.level + 1} bei ${m.xpForNextLevel} XP`)),
               h("div", { class: "xp-bar", style: { height: "12px" } }, h("i", { style: { width: `${Math.round(m.progress * 100)}%` } }))),
-            canEdit ? h("div", { class: "row wrap", style: { marginTop: "10px" } },
-              h("button", { class: "btn sm", onClick: () => editMember(m) }, "✎ Bearbeiten"),
-              h("button", { class: "btn sm", onClick: () => file.click() }, "📷 Profilbild"),
+            canManage ? h("div", { class: "row wrap", style: { marginTop: "10px" } },
+              canEdit ? h("button", { class: "btn sm", onClick: () => editMember(m) }, "✎ Bearbeiten") : null,
+              canEdit ? h("button", { class: "btn sm", onClick: () => file.click() }, "📷 Profilbild") : null,
               mine ? h("button", { class: "btn sm", onClick: changePasswordDialog }, "🔑 Passwort") : null,
-              !mine && store.isAdmin && store.mode === "cloud" ? h("button", { class: "btn sm", onClick: async () => {
+              !mine && store.isAdmin ? h("button", { class: "btn sm", onClick: async () => {
                 const makeAdmin = !m.isAdmin;
-                if (await confirmDialog(makeAdmin ? "Zum Admin machen?" : "Admin-Rechte entziehen?", `${m.name} ${makeAdmin ? "darf dann Passwörter zurücksetzen, Mitglieder verwalten und den Einladungscode sehen." : "verliert die Admin-Rechte."}`, { okLabel: makeAdmin ? "Zum Admin machen" : "Entziehen", danger: !makeAdmin })) {
+                if (await confirmDialog(makeAdmin ? "Zum Admin machen?" : "Admin-Rechte entziehen?", `${m.name} ${makeAdmin ? "darf dann diesen Realm verwalten, Mitglieder entfernen und den Einladungscode sehen." : "verliert die Admin-Rechte in diesem Realm."}`, { okLabel: makeAdmin ? "Zum Admin machen" : "Entziehen", danger: !makeAdmin })) {
                   await api.post(`/api/admin/members/${m.id}/admin`, { admin: makeAdmin }); toast(makeAdmin ? "Ist jetzt Admin" : "Admin-Rechte entzogen", "success");
                 }
               } }, m.isAdmin ? "👑 Admin entziehen" : "👑 Zum Admin machen") : null,
-              !mine && store.isHost ? h("button", { class: "btn sm", onClick: async () => {
-                if (await confirmDialog("Passwort zurücksetzen?", `${m.name} wird überall abgemeldet und legt beim nächsten Login ein neues Passwort fest.`, { okLabel: "Zurücksetzen", danger: false })) {
+              !mine && store.isSuperAdmin ? h("button", { class: "btn sm", onClick: async () => {
+                if (await confirmDialog("Passwort zurücksetzen?", `${m.name} wird in allen Realms abgemeldet und legt beim nächsten Login ein neues Passwort fest.`, { okLabel: "Zurücksetzen", danger: false })) {
                   await api.post(`/api/auth/reset/${m.id}`); toast("Passwort zurückgesetzt", "success");
                 }
               } }, "🔑 Zurücksetzen") : null,
               h("button", { class: "btn sm ghost danger", onClick: async () => {
-                if (await confirmDialog("Profil löschen?", `${m.name} wird entfernt. Beiträge bleiben erhalten.`)) {
+                if (await confirmDialog(mine ? "Realm verlassen?" : "Aus dem Realm entfernen?", `${mine ? "Du verlierst" : `${m.name} verliert`} XP und Level in diesem Realm. Das Konto und andere Realms bleiben, Beiträge auch.`, { okLabel: mine ? "Verlassen" : "Entfernen" })) {
                   await api.del(`/api/members/${m.id}`);
-                  if (mine) { await store.logout(); location.reload(); } else location.hash = "#/members";
+                  if (mine) { setRealm(""); location.href = location.pathname; } else location.hash = "#/members";
                 }
-              } }, "Löschen"),
+              } }, mine ? "Realm verlassen" : "Aus Realm entfernen"),
             ) : h("div", { class: "small muted", style: { marginTop: "10px" } }, "Nur das eigene Profil lässt sich bearbeiten."),
           ),
         ),

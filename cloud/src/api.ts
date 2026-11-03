@@ -2,7 +2,9 @@
 // Live-Updates über das Hub-Durable-Object, Steam-Proxy, Admin-Funktionen, Export/Import.
 import { Db, Env } from "./db";
 import { Repo, toBytes } from "./repo";
-import { resolveSession, issueToken, login, changePassword, resetPassword, validatePassword, hashPassword, randomCode, Session } from "./auth";
+import { resolveMember, randomCode, Session } from "./auth";
+import { Accounts, AuthInfo } from "./accounts";
+import { linkUsers, pushProfile } from "./link";
 import { Tournaments } from "./tournaments";
 import { steamSearch, steamDetails, steamAppIdFromUrl } from "./steam";
 import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound, gameKey } from "./logic";
@@ -11,11 +13,11 @@ import changelog from "./changelog.json";
 const VERSION = "2.0.0";
 /** Nur in LAN-Realms: Kosten/Anwesenheit, Ausrüstung, Freigaben, LAN-Ausgaben verwalten. */
 const LAN_ONLY = ["/api/costs", "/api/equipment", "/api/shares", "/api/events"];
-const PUBLIC = new Set(["/api/auth/members", "/api/auth/login", "/api/auth/register", "/api/ping", "/api/host", "/api/changes"]);
+const PUBLIC = new Set(["/api/auth/me", "/api/ping", "/api/host", "/api/changes"]);
 
 type Handler = (c: Ctx) => Promise<Response | unknown>;
 interface Route { method: string; pattern: RegExp; keys: string[]; handler: Handler }
-interface Ctx { req: Request; env: Env; db: Db; repo: Repo; realm: RealmInfo; session: Session | null; params: Record<string, string>; url: URL; body: <T = any>() => Promise<T>; broadcast: (topic: string, payload?: unknown) => Promise<void> }
+interface Ctx { req: Request; env: Env; db: Db; repo: Repo; realm: RealmInfo; auth: AuthInfo | null; session: Session | null; params: Record<string, string>; url: URL; body: <T = any>() => Promise<T>; broadcast: (topic: string, payload?: unknown) => Promise<void> }
 
 const routes: Route[] = [];
 function add(method: string, path: string, handler: Handler) {
@@ -31,7 +33,11 @@ const id = (c: Ctx, name = "id") => { const n = Number(c.params[name]); if (!Num
 const eventId = (c: Ctx) => { const v = c.url.searchParams.get("eventId"); return v ? Number(v) : null; };
 const actor = (c: Ctx) => c.session?.member.id ?? null;
 const session = (c: Ctx) => { if (!c.session) throw new Unauthorized(); return c.session; };
-const isAdmin = (c: Ctx) => !!c.session && c.session.member.isAdmin === 1;
+/** Realm-Admin oder Super-Admin (darf in jedem Realm alles). */
+const isAdmin = (c: Ctx) => !!c.session && (c.session.member.isAdmin === 1 || c.session.auth.superAdmin);
+const requireSuperAdmin = (c: Ctx) => { if (!c.session?.auth.superAdmin) throw new Forbidden("Nur Super-Admins dürfen das"); };
+/** Profil (Name, Avatar, Motto) gilt in allen Realms – ändern darf es nur der Inhaber oder ein Super-Admin. */
+const requireSelfOrSuper = (c: Ctx, memberId: number) => { if (session(c).member.id !== memberId && !session(c).auth.superAdmin) throw new Forbidden("Nur das eigene Profil kann bearbeitet werden"); };
 const requireAdmin = (c: Ctx) => { if (!isAdmin(c)) throw new Forbidden("Nur Admins dürfen das"); };
 const requireSelfOrAdmin = (c: Ctx, memberId: number) => { if (session(c).member.id !== memberId && !isAdmin(c)) throw new Forbidden("Nur das eigene Profil kann bearbeitet werden"); };
 const device = (c: Ctx) => c.req.headers.get("User-Agent") ?? "";
@@ -41,39 +47,23 @@ const requireAuthorOrAdmin = async (c: Ctx, table: string, rowId: number, what: 
   if (!row) throw new NotFound(`${what} nicht gefunden`);
   if (row.authorId !== session(c).member.id && !isAdmin(c)) throw new Forbidden(`Nur der Autor oder ein Admin darf ${what === "Kommentar" ? "den" : "diesen"} ${what} ändern`);
 };
-const authResponse = async (c: Ctx, memberId: number, token: string) => ({ token, member: await c.repo.member(memberId), isHost: (await c.repo.member(memberId)).isAdmin, isAdmin: (await c.repo.member(memberId)).isAdmin });
-
-// ---------------- Login
-get("/api/auth/members", async c => c.repo.authMembers());
-post("/api/auth/login", async c => {
-  const r = await c.body<{ memberId: number; password: string }>();
-  const m = await login(c.db, Number(r.memberId), String(r.password ?? ""));
-  const token = await issueToken(c.db, m.id, device(c));
-  await c.broadcast("members");
-  return authResponse(c, m.id, token);
+// ---------------- Login (Konten verwaltet der Worker, hier nur das Realm-Profil)
+const meResponse = async (c: Ctx) => {
+  const s = session(c); const m = await c.repo.member(s.member.id);
+  return { member: m, isHost: isAdmin(c), isAdmin: isAdmin(c), isRealmAdmin: m.isAdmin, isSuperAdmin: s.auth.superAdmin, account: { id: s.auth.userId, name: s.auth.name } };
+};
+get("/api/auth/me", async c => {
+  if (!c.auth) throw new Unauthorized();
+  if (!c.session) return json({ error: "Du bist (noch) kein Mitglied dieses Realms", notMember: true }, 403);
+  return meResponse(c);
 });
-post("/api/auth/register", async c => {
-  const r = await c.body<{ name: string; password: string; color?: string; inviteCode?: string }>();
-  validatePassword(String(r.password ?? ""));
-  const count = (await c.db.first<{ n: number }>("SELECT COUNT(*) AS n FROM members"))!.n;
-  if (count > 0) {
-    const code = await c.repo.inviteCode();
-    if (String(r.inviteCode ?? "").trim().toUpperCase() !== code) throw new Forbidden("Einladungscode fehlt oder ist falsch. Frag einen Admin der Bruderschaft.");
-  }
-  const m = await c.repo.createMember({ name: r.name, color: r.color });
-  await c.db.run("UPDATE members SET password = ? WHERE id = ?", await hashPassword(r.password), m.id);
-  const token = await issueToken(c.db, m.id, device(c));
-  await c.broadcast("members");
-  return authResponse(c, m.id, token);
+/** Nur Super-Admins: Passwort gilt für alle Realms. */
+post("/api/auth/reset/{id}", async c => {
+  requireSuperAdmin(c);
+  const m = await c.db.first<{ userId: number | null }>("SELECT userId FROM members WHERE id = ?", id(c));
+  if (!m?.userId) throw new NotFound("Zu diesem Profil gibt es kein Konto");
+  await new Accounts(c.env).resetPassword(m.userId); await c.broadcast("members"); return ok();
 });
-get("/api/auth/me", async c => { const s = session(c); const m = await c.repo.member(s.member.id); return { member: m, isHost: m.isAdmin, isAdmin: m.isAdmin }; });
-post("/api/auth/logout", async c => { await c.db.run("DELETE FROM auth_tokens WHERE tokenHash = ?", session(c).tokenHash); return ok(); });
-post("/api/auth/password", async c => {
-  const s = session(c); const r = await c.body<{ oldPassword?: string; newPassword: string }>();
-  await changePassword(c.db, s.member.id, r.oldPassword ?? "", r.newPassword);
-  return authResponse(c, s.member.id, await issueToken(c.db, s.member.id, device(c)));
-});
-post("/api/auth/reset/{id}", async c => { requireAdmin(c); await resetPassword(c.db, id(c)); await c.broadcast("members"); return ok(); });
 
 // ---------------- Admin
 get("/api/admin/invite", async c => { requireAdmin(c); return { code: await c.repo.inviteCode() }; });
@@ -86,8 +76,8 @@ post("/api/admin/reset", async c => {
   for (const t of ["games", "sessions", "poll", "costs", "equipment", "members", "suggestions", "forum"]) await c.broadcast(t);
   return r;
 });
-post("/api/admin/merge", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await mergeAll(c, data); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
-post("/api/admin/import", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await importAll(c, data); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
+post("/api/admin/merge", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await mergeAll(c, data); await linkUsers(c.db, c.env, c.realm); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
+post("/api/admin/import", async c => { requireSuperAdmin(c); const data = await c.body<ExportData>(); const r = await importAll(c, data); await linkUsers(c.db, c.env, c.realm); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
 
 // ---------------- Allgemein
 get("/api/bootstrap", async c => {
@@ -115,10 +105,29 @@ get("/api/changes", async c => ({ now: Date.now(), changes: await c.repo.changes
 
 // ---------------- Mitglieder
 get("/api/members", async c => c.repo.members());
-post("/api/members", async c => { const m = await c.repo.createMember(await c.body()); await c.broadcast("members"); return m; });
+post("/api/members", async () => { throw new BadRequest("Profile entstehen, wenn ein Konto dem Realm beitritt (Einladungscode)"); });
 get("/api/members/{id}", async c => c.repo.member(id(c)));
-put("/api/members/{id}", async c => { requireSelfOrAdmin(c, id(c)); const m = await c.repo.updateMember(id(c), await c.body()); await c.broadcast("members"); return m; });
-del("/api/members/{id}", async c => { requireSelfOrAdmin(c, id(c)); await c.repo.deleteMember(id(c)); await c.broadcast("members"); return ok(); });
+put("/api/members/{id}", async c => {
+  requireSelfOrSuper(c, id(c));
+  const r = await c.body<{ name: string; motto?: string; color?: string | null }>();
+  const row = await c.db.first<{ userId: number | null }>("SELECT userId FROM members WHERE id = ?", id(c));
+  if (row?.userId && await c.env.DB.prepare("SELECT id FROM users WHERE name = ? COLLATE NOCASE AND id != ?").bind(String(r.name ?? "").trim(), row.userId).first()) throw new BadRequest("Den Namen hat schon ein anderes Konto");
+  const m = await c.repo.updateMember(id(c), r);
+  await pushProfile(c.db, c.env, c.realm, id(c), false);
+  await c.broadcast("members"); return m;
+});
+/** Selbst austreten oder (Admin) aus dem Realm entfernen – das Konto bleibt bestehen. */
+del("/api/members/{id}", async c => {
+  requireSelfOrAdmin(c, id(c));
+  const row = await c.db.first<{ userId: number | null; isAdmin: number }>("SELECT userId, isAdmin FROM members WHERE id = ?", id(c));
+  if (!row) throw new NotFound("Mitglied nicht gefunden");
+  const admins = (await c.db.first<{ n: number }>("SELECT COUNT(*) AS n FROM members WHERE isAdmin = 1"))!.n;
+  const others = (await c.db.first<{ n: number }>("SELECT COUNT(*) AS n FROM members WHERE id != ?", id(c)))!.n;
+  if (row.isAdmin === 1 && admins <= 1 && others > 0) throw new BadRequest("Erst einen anderen Admin ernennen – sonst hat der Realm keinen mehr");
+  await c.repo.deleteMember(id(c));
+  if (row.userId) await c.env.DB.prepare("DELETE FROM realm_members WHERE realmSlug = ? AND userId = ?").bind(c.realm.slug, row.userId).run();
+  await c.broadcast("members"); return ok();
+});
 get("/api/members/{id}/xp", async c => c.repo.xpLog(id(c)));
 get("/api/members/{id}/avatar", async c => {
   const data = await c.repo.avatar(id(c));
@@ -126,7 +135,7 @@ get("/api/members/{id}/avatar", async c => {
   return new Response(data as unknown as BodyInit, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" } });
 });
 post("/api/members/{id}/avatar", async c => {
-  requireSelfOrAdmin(c, id(c));
+  requireSelfOrSuper(c, id(c));
   let bytes: ArrayBuffer;
   const ct = c.req.headers.get("Content-Type") ?? "";
   if (ct.startsWith("multipart/")) {
@@ -137,7 +146,7 @@ post("/api/members/{id}/avatar", async c => {
   } else bytes = await c.req.arrayBuffer();
   if (!bytes.byteLength) throw new BadRequest("Kein Bild übermittelt");
   if (bytes.byteLength > 900_000) throw new BadRequest("Bild ist zu groß (max. 900 KB, die App verkleinert normalerweise auf 512 px)");
-  await c.repo.setAvatar(id(c), bytes); await c.broadcast("members"); return ok(id(c));
+  await c.repo.setAvatar(id(c), bytes); await pushProfile(c.db, c.env, c.realm, id(c), true); await c.broadcast("members"); return ok(id(c));
 });
 
 // ---------------- Spiele
@@ -578,11 +587,10 @@ async function mergeAll(c: Ctx, data: ExportData) {
 // ---------------- Dispatcher (läuft im Durable Object des Realms)
 export interface RealmInfo { slug: string; name: string; kind: "lan" | "online" }
 
-export async function handleApi(req: Request, env: Env, db: Db, realm: RealmInfo, publish: (msg: string) => void): Promise<Response> {
+export async function handleApi(req: Request, env: Env, db: Db, realm: RealmInfo, auth: AuthInfo | null, publish: (msg: string) => void): Promise<Response> {
   const url = new URL(req.url);
   const repo = new Repo(db, realm.slug);
-  const token = req.headers.get("Authorization")?.replace(/^Bearer\s*/i, "").trim() ?? null;
-  const sess = await resolveSession(db, token);
+  const sess = await resolveMember(db, auth);
   const isAvatarGet = req.method === "GET" && (/^\/api\/members\/\d+\/avatar$/.test(url.pathname) || /^\/api\/sounds(\/\w+)?$/.test(url.pathname) || /^\/api\/media\/\d+$/.test(url.pathname));
   const isFolderUpload = (req.method === "POST" && /^\/api\/shares\/\d+\/folders$/.test(url.pathname)) || (req.method === "GET" && /^\/api\/shares\/\d+\/setup\.ps1$/.test(url.pathname));
   if (!sess && !PUBLIC.has(url.pathname) && !isAvatarGet && !isFolderUpload) return json({ error: "Bitte anmelden" }, 401);
@@ -591,7 +599,7 @@ export async function handleApi(req: Request, env: Env, db: Db, realm: RealmInfo
     await repo.touch(topic);
     publish(JSON.stringify({ type: "change", topic, ts: Date.now(), ...(payload !== undefined ? { payload } : {}) }));
   };
-  const ctx: Ctx = { req, env, db, repo, realm, session: sess, params: {}, url, body: async () => { try { return await req.json(); } catch { throw new BadRequest("Ungültiges JSON"); } }, broadcast };
+  const ctx: Ctx = { req, env, db, repo, realm, auth, session: sess, params: {}, url, body: async () => { try { return await req.json(); } catch { throw new BadRequest("Ungültiges JSON"); } }, broadcast };
 
   try {
     for (const r of routes) {

@@ -3,15 +3,19 @@
 import { DurableObject } from "cloudflare:workers";
 import { Db, Env } from "./db";
 import { handleApi, RealmInfo } from "./api";
-import { resolveSession } from "./auth";
+import { resolveMember } from "./auth";
+import type { AuthInfo } from "./accounts";
+import { linkUsers, joinRealm, applyProfile } from "./link";
+import { Repo } from "./repo";
 import { toBytes } from "./repo";
 import s0001 from "../realm-schema/0001_init.sql";
 import s0002 from "../realm-schema/0002_sounds.sql";
 import s0003 from "../realm-schema/0003_media.sql";
 import s0004 from "../realm-schema/0004_tournaments.sql";
+import s0005 from "../realm-schema/0005_accounts.sql";
 
 /** Schema-Stände je Realm; neue Änderungen hinten anhängen, nie bestehende ändern. */
-const SCHEMA = [s0001, s0002, s0003, s0004];
+const SCHEMA = [s0001, s0002, s0003, s0004, s0005];
 
 /** Tabellen, die beim ersten Realm aus der alten D1-Datenbank übernommen werden. */
 const LEGACY_TABLES = ["settings", "changes", "events", "members", "auth_tokens", "games", "shares", "sessions", "session_participants",
@@ -74,10 +78,16 @@ export class Realm extends DurableObject<Env> {
 
   async fetch(req: Request): Promise<Response> {
     const realm = JSON.parse(decodeURIComponent(req.headers.get("X-Realm-Info") ?? "%7B%7D")) as RealmInfo & { legacy?: boolean };
+    const authHeader = req.headers.get("X-Auth");
+    const auth = authHeader ? (JSON.parse(decodeURIComponent(authHeader)) as AuthInfo) : null;
     await this.ctx.blockConcurrencyWhile(() => this.importLegacy(realm));
     const url = new URL(req.url);
+    if (url.pathname.startsWith("/internal/")) {
+      try { return Response.json(await this.internal(url.pathname.slice(10), await req.json().catch(() => ({})), realm)); }
+      catch (e) { const st = (e as { status?: number }).status ?? 500; return Response.json({ error: (e as Error).message }, { status: st }); }
+    }
     if (url.pathname === "/ws" && req.headers.get("Upgrade") === "websocket") {
-      const sess = await resolveSession(this.db, url.searchParams.get("token"));
+      const sess = await resolveMember(this.db, auth);
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1]);
       pair[1].serializeAttachment({ id: sess?.member.id ?? null, name: sess?.member.name ?? "" } satisfies Attachment);
@@ -85,7 +95,30 @@ export class Realm extends DurableObject<Env> {
       this.sendPresence();
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-    return handleApi(req, this.env, this.db, realm, msg => this.send(msg));
+    return handleApi(req, this.env, this.db, realm, auth, msg => this.send(msg));
+  }
+
+  /** Nur vom Worker oder anderen Realms erreichbar (der Worker leitet /internal nie weiter). */
+  private async internal(op: string, body: any, realm: RealmInfo & { legacy?: boolean }) {
+    const changed = () => this.send(JSON.stringify({ type: "change", topic: "members", ts: Date.now() }));
+    switch (op) {
+      case "link": { const r = await this.ctx.blockConcurrencyWhile(() => linkUsers(this.db, this.env, realm)); return r; }
+      case "join": { const r = await joinRealm(this.db, this.env, realm, body, () => new Repo(this.db).inviteCode()); if (!r.already) changed(); return r; }
+      case "profile": { if (await applyProfile(this.db, this.env, Number(body.userId))) changed(); return { ok: true }; }
+      case "kick": {
+        const m = await this.db.first<{ id: number }>("SELECT id FROM members WHERE userId = ?", Number(body.userId));
+        if (m) { await new Repo(this.db).deleteMember(m.id); changed(); }
+        await this.env.DB.prepare("DELETE FROM realm_members WHERE realmSlug = ? AND userId = ?").bind(realm.slug, Number(body.userId)).run();
+        return { ok: true };
+      }
+      case "destroy": {
+        for (const ws of this.ctx.getWebSockets()) { try { ws.close(4000, "Realm gelöscht"); } catch { /* egal */ } }
+        await this.ctx.storage.deleteAll();
+        return { ok: true };
+      }
+      case "summary": return { members: (await this.db.first<{ n: number }>("SELECT COUNT(*) AS n FROM members"))!.n };
+      default: throw Object.assign(new Error("Unbekannt"), { status: 404 });
+    }
   }
 
   private send(msg: string) {
