@@ -71,9 +71,12 @@ Signatur: Der Workflow erwartet die Repository-Secrets `BBL_KEYSTORE_BASE64`, `B
 
 ## Spiele-Freigaben im LAN
 
-Liegen die Spiele auf PCs im LAN, trägt man unter *Spiele → Freigaben* deren Windows-Freigaben ein, z. B.
-`\\192.168.0.10\Spiele` (IP ist zuverlässiger als der PC-Name), optional mit Benutzer und Passwort, sonst
-Gastzugriff. Die App durchsucht die Freigabe als SMB-Client: Jeder Unterordner wird zu einem Spiel. Dubletten werden
+Liegen die Spiele auf PCs im LAN, richtet man sie unter *Spiele → Freigaben* mit dem **Assistenten** ein, am
+besten im Browser des PCs mit den Spielen: Der Assistent erkennt dessen Adresse, erzeugt ein PowerShell-Skript
+(als Administrator einfügen), das einen eigenen Lesebenutzer, die Freigabe, die Rechte und die Firewall-Regel
+anlegt, testet danach die Verbindung mit Vorschau der gefundenen Ordner und trägt die Freigabe ein. Alternativ
+lassen sich vorhandene Freigaben und Unterordner per Tippen auswählen, oder Profis tragen den Pfad direkt ein,
+z. B. `\\192.168.0.10\Spiele` mit Benutzer und Passwort. Die App durchsucht die Freigabe als SMB-Client: Jeder Unterordner wird zu einem Spiel. Dubletten werden
 über den Namen (ohne Groß/Kleinschreibung und Satzzeichen) und den Pfad erkannt, einmal gesehene und wieder
 gelöschte Ordner tauchen nicht erneut auf. Eingelesen wird beim Serverstart, alle 15 Minuten und per Knopf. Auf der
 Spielkarte steht der Pfad mit „Kopieren“, die Dateien holt sich jeder direkt vom PC im Explorer. Eine eigene

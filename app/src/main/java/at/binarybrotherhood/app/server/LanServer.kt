@@ -359,6 +359,12 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             post { call.respond(repo.createShare(call.receive(), call.actor()).also { broadcast("shares") }) }
             delete("/{id}") { repo.deleteShare(call.id(), call.session().member.id, call.isHost()); broadcast("shares"); broadcast("games"); call.respond(OkDto()) }
             post("/scan") { val r = repo.scanAll(); broadcast("games"); broadcast("shares"); call.respond(r) }
+            post("/test") { call.respond(repo.testShare(call.receive())) }
+            post("/browse") { call.respond(repo.browse(call.receive())) }
+            get("/wizard") {
+                val ip = runCatching { call.request.local.remoteAddress }.getOrDefault("")
+                call.respond(ShareWizardDto(clientIp = ip, clientIsHostPhone = ip in LOOPBACK, hostAddresses = NetUtils.localAddresses(context)))
+            }
             post("/{id}/scan") { val r = repo.scanShare(call.id()); broadcast("games"); broadcast("shares"); call.respond(r) }
         }
 

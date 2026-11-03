@@ -46,7 +46,11 @@ import at.binarybrotherhood.app.server.PollDto
 import at.binarybrotherhood.app.server.PollVoteDto
 import at.binarybrotherhood.app.server.SessionDto
 import at.binarybrotherhood.app.server.SessionRequest
+import at.binarybrotherhood.app.server.BrowseDto
+import at.binarybrotherhood.app.server.BrowseEntryDto
+import at.binarybrotherhood.app.server.BrowseRequest
 import at.binarybrotherhood.app.server.NetworkShareDto
+import at.binarybrotherhood.app.server.ShareTestDto
 import at.binarybrotherhood.app.server.ShareRequest
 import at.binarybrotherhood.app.server.ShareScanDto
 import at.binarybrotherhood.app.server.ShareDto
@@ -303,6 +307,30 @@ class Repository(private val context: Context, private val db: AppDatabase = App
     }
 
     suspend fun scanAll(): List<ShareScanDto> = db.shares().all().map { scanShare(it.id) }
+
+    /** Verbindung probieren, ohne etwas zu speichern: liefert die Spielordner oder Fehler plus Hinweis. */
+    suspend fun testShare(req: ShareRequest): ShareTestDto {
+        val path = ShareScanner.normalize(req.path)
+        return try {
+            ShareTestDto(path, withContext(Dispatchers.IO) { ShareScanner.listFolders(path, req.username.trim(), req.password, req.domain.trim()) })
+        } catch (e: Exception) {
+            ShareTestDto(path, error = (e.message ?: e.javaClass.simpleName).take(200), hint = ShareScanner.hint(e))
+        }
+    }
+
+    /** Freigaben eines Rechners (path leer) oder Unterordner eines Pfads auflisten, zum Auswählen per Tippen. */
+    suspend fun browse(req: BrowseRequest): BrowseDto {
+        val host = req.host.trim().trimStart('\\', '/')
+        return try {
+            val entries = withContext(Dispatchers.IO) {
+                if (req.path.isBlank()) ShareScanner.listShares(host, req.username.trim(), req.password, req.domain.trim()).map { BrowseEntryDto(it, "share") }
+                else ShareScanner.listFolders(req.path, req.username.trim(), req.password, req.domain.trim()).map { BrowseEntryDto(it, "folder") }
+            }
+            BrowseDto(host, req.path, entries)
+        } catch (e: Exception) {
+            BrowseDto(host, req.path, error = (e.message ?: e.javaClass.simpleName).take(200), hint = ShareScanner.hint(e))
+        }
+    }
 
     /**
      * Liest die Unterordner einer Freigabe ein. Neue Ordner werden zu Spielen, Dubletten (gleicher Name

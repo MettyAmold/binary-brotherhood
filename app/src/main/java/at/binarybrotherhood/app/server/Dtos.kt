@@ -81,6 +81,18 @@ data class NetworkShareDto(
 )
 
 @Serializable
+data class ShareTestDto(val path: String, val folders: List<String> = emptyList(), val error: String? = null, val hint: String? = null)
+
+@Serializable
+data class BrowseEntryDto(val name: String, val kind: String)
+
+@Serializable
+data class BrowseDto(val host: String, val path: String, val entries: List<BrowseEntryDto> = emptyList(), val error: String? = null, val hint: String? = null)
+
+@Serializable
+data class ShareWizardDto(val clientIp: String, val clientIsHostPhone: Boolean, val hostAddresses: List<String>)
+
+@Serializable
 data class ShareScanDto(val shareId: Long, val path: String, val folders: Int, val added: Int, val error: String? = null)
 
 @Serializable
@@ -263,6 +275,7 @@ data class ErrorDto(val error: String)
 // ---------- Anfragen ----------
 
 @Serializable data class MemberRequest(val name: String, val motto: String = "", val color: String? = null)
+@Serializable data class BrowseRequest(val host: String, val path: String = "", val username: String = "", val password: String = "", val domain: String = "")
 @Serializable data class ShareRequest(val path: String, val username: String = "", val password: String = "", val domain: String = "")
 @Serializable data class LoginRequest(val memberId: Long, val password: String)
 @Serializable data class RegisterRequest(val name: String, val password: String, val color: String? = null)

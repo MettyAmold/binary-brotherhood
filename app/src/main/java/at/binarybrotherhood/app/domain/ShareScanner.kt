@@ -32,8 +32,9 @@ object ShareScanner {
         return (listOf("\\\\${p.host}", p.share) + p.segments).joinToString("\\")
     }
 
-    fun listFolders(share: ShareEntity): List<String> {
-        val p = parse(share.path)
+    fun listFolders(share: ShareEntity): List<String> = listFolders(share.path, share.username, share.password, share.domain)
+
+    private fun context(username: String, password: String, domain: String): CIFSContext {
         val props = Properties().apply {
             setProperty("jcifs.smb.client.minVersion", "SMB1")
             setProperty("jcifs.smb.client.maxVersion", "SMB311")
@@ -44,14 +45,44 @@ object ShareScanner {
             setProperty("jcifs.netbios.cachePolicy", "60")
         }
         val base: CIFSContext = BaseContext(PropertyConfiguration(props))
-        val ctx = if (share.username.isBlank()) base.withGuestCrendentials()
-        else base.withCredentials(NtlmPasswordAuthenticator(share.domain.ifBlank { null }, share.username, share.password))
+        return if (username.isBlank()) base.withGuestCrendentials()
+        else base.withCredentials(NtlmPasswordAuthenticator(domain.ifBlank { null }, username, password))
+    }
 
-        var dir = SmbFile("smb://${p.host}/${p.share}/", ctx)
+    fun listFolders(path: String, username: String, password: String, domain: String = ""): List<String> {
+        val p = parse(path)
+        var dir = SmbFile("smb://${p.host}/${p.share}/", context(username, password, domain))
         // Segmentweise absteigen, damit Leerzeichen und Sonderzeichen in Ordnernamen kein URL-Encoding brauchen
         for (seg in p.segments) dir = SmbFile(dir, "$seg/")
         return dir.use { d ->
             d.listFiles().filter { it.isDirectory }.map { it.name.trimEnd('/') }.filter(::isGameFolder).sorted()
+        }
+    }
+
+    /** Freigaben eines Rechners (ohne versteckte wie C$, IPC$). */
+    fun listShares(host: String, username: String, password: String, domain: String = ""): List<String> {
+        if (host.isBlank() || host.contains('/') || host.contains('\\')) throw BadRequestException("Ungültiger Rechnername")
+        return SmbFile("smb://$host/", context(username, password, domain)).use { root ->
+            root.listFiles().map { it.name.trimEnd('/') }.filter { !it.endsWith("$") }.sorted()
+        }
+    }
+
+    /** Übersetzt jcifs-Fehler in Hinweise, mit denen Laien etwas anfangen können. */
+    fun hint(e: Throwable): String {
+        val msg = (e.message ?: "").lowercase()
+        val name = e.javaClass.simpleName
+        return when {
+            name == "SmbAuthException" || msg.contains("logon fail") || msg.contains("access denied") && msg.contains("logon") ->
+                "Anmeldung abgelehnt: Benutzer oder Passwort stimmen nicht, oder das Einrichtungs-Skript wurde noch nicht ausgeführt. Gastzugriff blockiert Windows meist."
+            msg.contains("bad_network_name") || msg.contains("network name cannot be found") || msg.contains("invalid name") ->
+                "Die Freigabe gibt es auf diesem PC nicht. Freigabename prüfen oder das Einrichtungs-Skript ausführen."
+            msg.contains("access denied") || msg.contains("access_denied") ->
+                "Zugriff verweigert: Der Benutzer darf den Ordner nicht lesen. Freigabe- und NTFS-Rechte prüfen."
+            name == "UnknownHostException" || msg.contains("unknown host") || msg.contains("failed to connect") || msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection refused") || msg.contains("unreachable") ->
+                "PC nicht erreichbar: gleiches WLAN? Windows-Netzwerkprofil auf „Privat“? Firewall-Regel „Datei- und Druckerfreigabe“ aktiv? Am besten die IP-Adresse statt des Namens verwenden."
+            msg.contains("object_name_not_found") || msg.contains("cannot find the file") || msg.contains("not found") ->
+                "Den Unterordner gibt es nicht. Pfad prüfen."
+            else -> "Verbindung fehlgeschlagen: ${e.message ?: name}"
         }
     }
 
