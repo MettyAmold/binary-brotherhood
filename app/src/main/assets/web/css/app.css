@@ -198,7 +198,7 @@ p { margin: 0 0 .6em; }
 
 /* ---------- Modal / Toast ---------- */
 /* Kein backdrop-filter: im Android-WebView bleibt der Dialog damit teils unsichtbar, außerdem teuer auf Handys */
-.modal-back { position: fixed; inset: 0; background: rgba(3, 4, 7, .78); z-index: 50; display: flex; align-items: flex-end; justify-content: center; padding: 0; animation: fade .15s ease; }
+.modal-back { position: fixed; inset: 0; background: rgba(3, 4, 7, .9); z-index: 50; display: flex; align-items: flex-end; justify-content: center; padding: 0; animation: fade .15s ease; }
 @media (min-width: 640px) { .modal-back { align-items: center; padding: 20px; } }
 .modal { background: var(--panel); border: 1px solid var(--line-2); border-radius: 18px 18px 0 0; width: 100%; max-width: 560px; max-height: 92vh; max-height: 92dvh; display: flex; flex-direction: column; box-shadow: var(--shadow); animation: up .18s ease; padding-bottom: env(safe-area-inset-bottom, 0); }
 .modal-body { min-height: 0; -webkit-overflow-scrolling: touch; }
@@ -208,6 +208,13 @@ p { margin: 0 0 .6em; }
 .modal-head h3 { flex: 1; font-family: var(--display); color: var(--gold); letter-spacing: .05em; font-size: 16px; }
 .modal-body { padding: 16px; overflow-y: auto; }
 .modal-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+/* Handy: Dialog füllt den ganzen sichtbaren Bereich (auch bei offener Tastatur), nur der Body scrollt */
+@media (max-width: 639px) {
+  .modal { height: 100%; max-height: 100%; border-radius: 0; border-left: 0; border-right: 0; max-width: none; }
+  .modal-head { padding: 10px 14px; }
+  .modal-body { padding: 12px 14px; flex: 1 1 auto; }
+  .modal-foot { padding: 8px 14px; }
+}
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes up { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
 
