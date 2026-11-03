@@ -1,6 +1,6 @@
 // Mitglieder: Profile, Avatar-Upload, XP, Level und Rang.
 import { h, mount, modal, confirmDialog, avatar, empty, fmtDate, toast, input, field, resizeImage, timeAgo } from "../ui.js";
-import { api } from "../api.js";
+import { api, authHeaders } from "../api.js";
 import { store, on } from "../store.js";
 import { changePasswordDialog } from "../app.js";
 
@@ -35,7 +35,12 @@ export async function renderMembers(main, params) {
       try {
         toast("Bild wird hochgeladen …");
         const blob = await resizeImage(f, 512);
-        await fetch(`/api/members/${m.id}/avatar`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob }).then(r => { if (!r.ok) throw new Error("Upload fehlgeschlagen"); });
+        const res = await fetch(`/api/members/${m.id}/avatar`, { method: "POST", headers: { ...authHeaders(), "Content-Type": "image/jpeg" }, body: blob });
+        if (!res.ok) {
+          let msg = "Upload fehlgeschlagen";
+          try { msg = (await res.json()).error || msg; } catch { /* kein JSON */ }
+          throw new Error(msg);
+        }
         toast("Profilbild gespeichert", "success");
       } catch (e) { toast(e.message, "error"); }
       file.value = "";
