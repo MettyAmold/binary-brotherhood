@@ -53,8 +53,8 @@ export async function renderSuggestions(main, params) {
             !s.adoptedGameId ? h("button", { class: "btn sm ghost gold", onClick: async () => {
               if (await confirmDialog("In Spieleliste übernehmen?", `„${s.title}“ wird als Spiel angelegt.`, { okLabel: "Übernehmen", danger: false })) { await api.post(`/api/suggestions/${s.id}/adopt`); toast("Übernommen!", "success"); }
             } }, "→ Übernehmen") : null,
-            h("button", { class: "btn sm ghost", onClick: () => editSuggestion(s) }, "✎"),
-            h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Vorschlag löschen?", s.title)) await api.del(`/api/suggestions/${s.id}`); } }, "✕"),
+            (mine || store.isAdmin) ? h("button", { class: "btn sm ghost", onClick: () => editSuggestion(s) }, "✎") : null,
+            (mine || store.isAdmin) ? h("button", { class: "btn sm ghost danger", onClick: async () => { if (await confirmDialog("Vorschlag löschen?", s.title)) await api.del(`/api/suggestions/${s.id}`); } }, "✕") : null,
           ),
         ),
       ),
@@ -74,7 +74,7 @@ export async function renderSuggestions(main, params) {
     return h("div", { class: "comments" },
       s.comments.map(c => h("div", { class: "comment" }, avatar(c, "sm"),
         h("div", { class: "bubble" }, h("div", { class: "meta" }, h("strong", {}, c.authorName), timeAgo(c.createdAt),
-          h("a", { href: "#", class: "muted", onClick: async (e) => { e.preventDefault(); if (await confirmDialog("Kommentar löschen?", "")) await api.del(`/api/suggestions/comments/${c.id}`); } }, "löschen")),
+          (store.isAdmin || (store.me && store.me.id === c.authorId)) ? h("a", { href: "#", class: "muted", onClick: async (e) => { e.preventDefault(); if (await confirmDialog("Kommentar löschen?", "")) await api.del(`/api/suggestions/comments/${c.id}`); } }, "löschen") : null),
           h("div", { style: { whiteSpace: "pre-wrap" } }, linkify(c.text))))),
       h("div", { class: "comment-form" }, inp, h("button", { class: "btn", onClick: send }, "Senden")),
     );

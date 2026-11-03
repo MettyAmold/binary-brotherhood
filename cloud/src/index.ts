@@ -32,6 +32,12 @@ const isAdmin = (c: Ctx) => !!c.session && c.session.member.isAdmin === 1;
 const requireAdmin = (c: Ctx) => { if (!isAdmin(c)) throw new Forbidden("Nur Admins dürfen das"); };
 const requireSelfOrAdmin = (c: Ctx, memberId: number) => { if (session(c).member.id !== memberId && !isAdmin(c)) throw new Forbidden("Nur das eigene Profil kann bearbeitet werden"); };
 const device = (c: Ctx) => c.req.headers.get("User-Agent") ?? "";
+/** Autor des Eintrags oder Admin – sonst 403. */
+const requireAuthorOrAdmin = async (c: Ctx, table: string, rowId: number, what: string) => {
+  const row = await c.db.first<{ authorId: number | null }>(`SELECT authorId FROM ${table} WHERE id = ?`, rowId);
+  if (!row) throw new NotFound(`${what} nicht gefunden`);
+  if (row.authorId !== session(c).member.id && !isAdmin(c)) throw new Forbidden(`Nur der Autor oder ein Admin darf ${what === "Kommentar" ? "den" : "diesen"} ${what} ändern`);
+};
 const authResponse = async (c: Ctx, memberId: number, token: string) => ({ token, member: await c.repo.member(memberId), isHost: (await c.repo.member(memberId)).isAdmin, isAdmin: (await c.repo.member(memberId)).isAdmin });
 
 // ---------------- Login
@@ -156,20 +162,20 @@ post("/api/polls/{id}/close", async c => { const p = await c.repo.closePoll(id(c
 // ---------------- Vorschläge
 get("/api/suggestions", async c => c.repo.suggestions(actor(c)));
 post("/api/suggestions", async c => { const s = await c.repo.createSuggestion(await c.body(), actor(c)); await c.broadcast("suggestions"); return s; });
-put("/api/suggestions/{id}", async c => { const s = await c.repo.updateSuggestion(id(c), await c.body(), actor(c)); await c.broadcast("suggestions"); return s; });
-del("/api/suggestions/{id}", async c => { await c.repo.deleteSuggestion(id(c)); await c.broadcast("suggestions"); return ok(); });
+put("/api/suggestions/{id}", async c => { await requireAuthorOrAdmin(c, "suggestions", id(c), "Vorschlag"); const s = await c.repo.updateSuggestion(id(c), await c.body(), actor(c)); await c.broadcast("suggestions"); return s; });
+del("/api/suggestions/{id}", async c => { await requireAuthorOrAdmin(c, "suggestions", id(c), "Vorschlag"); await c.repo.deleteSuggestion(id(c)); await c.broadcast("suggestions"); return ok(); });
 post("/api/suggestions/{id}/vote", async c => { await c.repo.voteSuggestion(id(c), actor(c), Number((await c.body<{ value: number }>()).value)); await c.broadcast("suggestions"); return ok(); });
 post("/api/suggestions/{id}/comments", async c => { await c.repo.commentSuggestion(id(c), actor(c), (await c.body<{ text: string }>()).text); await c.broadcast("suggestions"); return ok(); });
-del("/api/suggestions/comments/{id}", async c => { await c.repo.deleteSuggestionComment(id(c)); await c.broadcast("suggestions"); return ok(); });
+del("/api/suggestions/comments/{id}", async c => { await requireAuthorOrAdmin(c, "suggestion_comments", id(c), "Kommentar"); await c.repo.deleteSuggestionComment(id(c)); await c.broadcast("suggestions"); return ok(); });
 post("/api/suggestions/{id}/adopt", async c => { const g = await c.repo.adoptSuggestion(id(c), actor(c)); await c.broadcast("suggestions"); await c.broadcast("games"); return g; });
 
 // ---------------- Forum
 get("/api/forum", async c => c.repo.forum());
 post("/api/forum", async c => { const p = await c.repo.createPost(await c.body(), actor(c)); await c.broadcast("forum"); return p; });
-put("/api/forum/{id}", async c => { const p = await c.repo.updatePost(id(c), await c.body()); await c.broadcast("forum"); return p; });
-del("/api/forum/{id}", async c => { await c.repo.deletePost(id(c)); await c.broadcast("forum"); return ok(); });
+put("/api/forum/{id}", async c => { await requireAuthorOrAdmin(c, "forum_posts", id(c), "Beitrag"); const p = await c.repo.updatePost(id(c), await c.body()); await c.broadcast("forum"); return p; });
+del("/api/forum/{id}", async c => { requireAdmin(c); await c.repo.deletePost(id(c)); await c.broadcast("forum"); return ok(); });
 post("/api/forum/{id}/comments", async c => { await c.repo.commentPost(id(c), actor(c), (await c.body<{ text: string }>()).text); await c.broadcast("forum"); return ok(); });
-del("/api/forum/comments/{id}", async c => { await c.repo.deleteForumComment(id(c)); await c.broadcast("forum"); return ok(); });
+del("/api/forum/comments/{id}", async c => { requireAdmin(c); await c.repo.deleteForumComment(id(c)); await c.broadcast("forum"); return ok(); });
 
 // ---------------- LAN-Party-Ausgaben
 get("/api/events", async c => c.repo.events());
