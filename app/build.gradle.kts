@@ -14,15 +14,32 @@ android {
         applicationId = "at.binarybrotherhood.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0"
+        versionCode = (System.getenv("BBL_VERSION_CODE") ?: "2").toInt()
+        versionName = System.getenv("BBL_VERSION_NAME") ?: "1.0"
         vectorDrawables { useSupportLibrary = true }
+    }
+
+    // Release-Signatur: Keystore-Pfad und Passwörter kommen aus Umgebungsvariablen
+    // (lokal aus ~/.config/bbl/release.env, in GitHub Actions aus den Repository-Secrets).
+    // Fehlen sie, wird mit dem Debug-Key signiert, damit der Build nie scheitert.
+    val keystorePath = System.getenv("BBL_KEYSTORE_PATH")
+    val hasReleaseKey = keystorePath != null && file(keystorePath).exists()
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(keystorePath!!)
+                storePassword = System.getenv("BBL_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("BBL_KEY_ALIAS") ?: "bbl"
+                keyPassword = System.getenv("BBL_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
     compileOptions {

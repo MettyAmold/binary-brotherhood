@@ -9,3 +9,4 @@
 .externalNativeBuild
 .cxx
 .playwright-mcp
+/.kotlin

@@ -44,6 +44,24 @@ Voraussetzungen: Android Studio (Ladybug oder neuer) bzw. JDK 17+ und Android SD
 
 Oder das Projekt in Android Studio öffnen und auf das Host-Handy ausführen. Mindest-Android: 8.0 (API 26).
 
+### Fertige APK von GitHub
+
+Jeder Push auf `main` baut automatisch eine signierte Release-APK (GitHub Actions, `.github/workflows/android-release.yml`)
+und hängt sie an das Rolling-Release **„latest“** (Pre-Release) an. Ein Tag `vX.Y.Z` erzeugt zusätzlich ein
+versioniertes Release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+Die APK heißt `BinaryBrotherhood-<Version>.apk` und liegt unter *Releases*. Auf dem Handy herunterladen,
+„Installation aus unbekannten Quellen“ erlauben, fertig. Updates installieren sich über die alte Version,
+weil alle Builds mit demselben Schlüssel signiert sind.
+
+Signatur: Der Workflow erwartet die Repository-Secrets `BBL_KEYSTORE_BASE64`, `BBL_KEYSTORE_PASSWORD`,
+`BBL_KEY_ALIAS` und `BBL_KEY_PASSWORD`. Fehlen sie, wird mit dem Debug-Key signiert. Lokal signiert
+`./gradlew :app:assembleRelease`, wenn `BBL_KEYSTORE_PATH` und die Passwort-Variablen gesetzt sind.
+
 ## Benutzung
 
 1. App auf dem Host-Handy starten. Der Server läuft als Vordergrund-Dienst (Benachrichtigung), WLAN und CPU werden wach gehalten.
