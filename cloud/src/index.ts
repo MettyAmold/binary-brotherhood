@@ -4,7 +4,7 @@ import { Db, Env } from "./db";
 import { Repo, toBytes } from "./repo";
 import { resolveSession, issueToken, login, changePassword, resetPassword, validatePassword, hashPassword, randomCode, Session } from "./auth";
 import { steamSearch, steamDetails, steamAppIdFromUrl } from "./steam";
-import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound } from "./logic";
+import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound, gameKey } from "./logic";
 export { Hub } from "./hub";
 
 const VERSION = "2.0.0";
@@ -83,6 +83,7 @@ post("/api/admin/reset", async c => {
   for (const t of ["games", "sessions", "poll", "costs", "equipment", "members", "suggestions", "forum"]) await c.broadcast(t);
   return r;
 });
+post("/api/admin/merge", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await mergeAll(c, data); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
 post("/api/admin/import", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await importAll(c, data); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
 
 // ---------------- Allgemein
@@ -274,6 +275,131 @@ async function importAll(c: Ctx, data: ExportData) {
     if (first) await c.db.run("UPDATE members SET isAdmin = 1 WHERE id = ?", first.id);
   }
   return { ok: true, rows: count };
+}
+
+/**
+ * Führt einen Export (z. B. vom Handy) mit dem Cloud-Bestand zusammen: Mitglieder, LAN-Ausgaben, Spiele und
+ * Ausrüstung werden über den Namen abgeglichen, alles andere mit neuen IDs angehängt. Nichts wird gelöscht.
+ */
+async function mergeAll(c: Ctx, data: ExportData) {
+  if (data?.format !== "binary-brotherhood/1" || !data.tables) throw new BadRequest("Kein gültiger Export");
+  const t = (name: string) => (data.tables[name] ?? []) as Record<string, any>[];
+  const n = (v: unknown) => (v == null ? null : Number(v));
+  const added: Record<string, number> = {};
+  const bump = (k: string) => (added[k] = (added[k] ?? 0) + 1);
+  const db = c.db;
+  const key = (s: string) => String(s ?? "").trim().toLowerCase();
+
+  // Mitglieder (Name)
+  const memberMap = new Map<number, number>();
+  const existingMembers = await db.all<{ id: number; name: string }>("SELECT id, name FROM members");
+  for (const m of t("members")) {
+    const ex = existingMembers.find(x => key(x.name) === key(m.name));
+    if (ex) { memberMap.set(Number(m.id), ex.id); continue; }
+    const id = await db.insert("INSERT INTO members (name, motto, color, hasAvatar, createdAt, password, isAdmin) VALUES (?, ?, ?, 0, ?, ?, 0)", m.name, m.motto ?? "", m.color ?? "#8e97a8", m.createdAt ?? Date.now(), m.password ?? "");
+    memberMap.set(Number(m.id), id); bump("members");
+    const b64 = data.avatars?.[String(m.id)];
+    if (b64) { const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)); await db.run("UPDATE members SET avatar = ?, hasAvatar = 1, avatarUpdatedAt = ? WHERE id = ?", bytes.buffer, Date.now(), id); }
+  }
+  const mm = (v: unknown) => (v == null ? null : memberMap.get(Number(v)) ?? null);
+
+  // LAN-Ausgaben (Name); die aktuelle Ausgabe der Cloud bleibt aktuell
+  const eventMap = new Map<number, number>();
+  const existingEvents = await db.all<{ id: number; name: string }>("SELECT id, name FROM events");
+  for (const e of t("events")) {
+    const ex = existingEvents.find(x => key(x.name) === key(e.name));
+    if (ex) { eventMap.set(Number(e.id), ex.id); continue; }
+    const id = await db.insert("INSERT INTO events (name, year, startDate, days, isCurrent, createdAt) VALUES (?, ?, ?, ?, 0, ?)", e.name, e.year ?? new Date().getFullYear(), e.startDate ?? "", e.days ?? 3, e.createdAt ?? Date.now());
+    eventMap.set(Number(e.id), id); bump("events");
+  }
+  const em = (v: unknown) => { const r = v == null ? null : eventMap.get(Number(v)); return r ?? null; };
+  const fallbackEvent = (await c.repo.ensureCurrentEvent()).id;
+  const emf = (v: unknown) => em(v) ?? fallbackEvent;
+
+  // Freigaben (Pfad)
+  const shareMap = new Map<number, number>();
+  const existingShares = await db.all<{ id: number; path: string }>("SELECT id, path FROM shares");
+  for (const sh of t("shares")) {
+    const ex = existingShares.find(x => key(x.path) === key(sh.path));
+    if (ex) { shareMap.set(Number(sh.id), ex.id); continue; }
+    const id = await db.insert("INSERT INTO shares (path, addedById, lastScanAt, lastError, lastCount, knownFolders, uploadKey, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", sh.path, mm(sh.addedById), n(sh.lastScanAt), sh.lastError ?? "", sh.lastCount ?? 0, sh.knownFolders ?? "", randomCode(20), sh.createdAt ?? Date.now());
+    shareMap.set(Number(sh.id), id); bump("shares");
+  }
+
+  // Spiele (Namensschlüssel)
+  const gameMap = new Map<number, number>();
+  const existingGames = await db.all<{ id: number; name: string }>("SELECT id, name FROM games");
+  for (const g of t("games")) {
+    const ex = existingGames.find(x => gameKey(x.name) === gameKey(g.name));
+    if (ex) { gameMap.set(Number(g.id), ex.id); continue; }
+    const id = await db.insert("INSERT INTO games (name, description, steamUrl, steamAppId, imageUrl, players, addedById, selectedForNext, createdAt, sharePath, shareId) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+      g.name, g.description ?? "", g.steamUrl ?? "", n(g.steamAppId), g.imageUrl ?? "", g.players ?? "", mm(g.addedById), g.createdAt ?? Date.now(), g.sharePath ?? "", g.shareId == null ? null : shareMap.get(Number(g.shareId)) ?? null);
+    gameMap.set(Number(g.id), id); bump("games");
+  }
+  const gm = (v: unknown) => (v == null ? null : gameMap.get(Number(v)) ?? null);
+
+  // Runden
+  const sessionMap = new Map<number, number>();
+  const exists = async (sql: string, ...p: unknown[]) => (await db.first<{ id: number }>(sql, ...p))?.id ?? null;
+  for (const s of t("sessions")) {
+    const gid = gm(s.gameId); if (gid == null) continue;
+    const dup = await exists("SELECT id FROM sessions WHERE gameId = ? AND startedAt = ?", gid, s.startedAt);
+    if (dup) { sessionMap.set(Number(s.id), dup); continue; }
+    const id = await db.insert("INSERT INTO sessions (gameId, eventId, startedAt, endedAt, chosenBy, note) VALUES (?, ?, ?, ?, ?, ?)", gid, emf(s.eventId), s.startedAt, n(s.endedAt), s.chosenBy ?? "manual", s.note ?? "");
+    sessionMap.set(Number(s.id), id); bump("sessions");
+  }
+  for (const p of t("session_participants")) { const sid = sessionMap.get(Number(p.sessionId)), mid = mm(p.memberId); if (sid && mid) await db.run("INSERT OR IGNORE INTO session_participants (sessionId, memberId) VALUES (?, ?)", sid, mid); }
+
+  // Vorschläge, Forum
+  const sugMap = new Map<number, number>(), sugCommentMap = new Map<number, number>();
+  for (const sg of t("suggestions")) {
+    const dup = await exists("SELECT id FROM suggestions WHERE title = ? AND createdAt = ?", sg.title, sg.createdAt ?? 0);
+    if (dup) { sugMap.set(Number(sg.id), dup); continue; }
+    const id = await db.insert("INSERT INTO suggestions (scope, title, description, steamUrl, steamAppId, imageUrl, authorId, adoptedGameId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", sg.scope ?? "current", sg.title, sg.description ?? "", sg.steamUrl ?? "", n(sg.steamAppId), sg.imageUrl ?? "", mm(sg.authorId), gm(sg.adoptedGameId), sg.createdAt ?? Date.now());
+    sugMap.set(Number(sg.id), id); bump("suggestions");
+  }
+  for (const v of t("suggestion_votes")) { const sid = sugMap.get(Number(v.suggestionId)), mid = mm(v.memberId); if (sid && mid) await db.run("INSERT OR IGNORE INTO suggestion_votes (suggestionId, memberId, value) VALUES (?, ?, ?)", sid, mid, v.value ?? 1); }
+  for (const cm of t("suggestion_comments")) { const sid = sugMap.get(Number(cm.suggestionId)); if (!sid) continue; const dup = await exists("SELECT id FROM suggestion_comments WHERE suggestionId = ? AND createdAt = ?", sid, cm.createdAt ?? 0); if (dup) { sugCommentMap.set(Number(cm.id), dup); continue; } const id = await db.insert("INSERT INTO suggestion_comments (suggestionId, authorId, text, createdAt) VALUES (?, ?, ?, ?)", sid, mm(cm.authorId), cm.text ?? "", cm.createdAt ?? Date.now()); sugCommentMap.set(Number(cm.id), id); }
+  const postMap = new Map<number, number>(), postCommentMap = new Map<number, number>();
+  for (const p of t("forum_posts")) { const dup = await exists("SELECT id FROM forum_posts WHERE title = ? AND createdAt = ?", p.title ?? "", p.createdAt ?? 0); if (dup) { postMap.set(Number(p.id), dup); continue; } const id = await db.insert("INSERT INTO forum_posts (authorId, title, body, pinned, createdAt) VALUES (?, ?, ?, ?, ?)", mm(p.authorId), p.title ?? "", p.body ?? "", p.pinned ? 1 : 0, p.createdAt ?? Date.now()); postMap.set(Number(p.id), id); bump("forum_posts"); }
+  for (const cm of t("forum_comments")) { const pid = postMap.get(Number(cm.postId)); if (!pid) continue; const dup = await exists("SELECT id FROM forum_comments WHERE postId = ? AND createdAt = ?", pid, cm.createdAt ?? 0); if (dup) { postCommentMap.set(Number(cm.id), dup); continue; } const id = await db.insert("INSERT INTO forum_comments (postId, authorId, body, createdAt) VALUES (?, ?, ?, ?)", pid, mm(cm.authorId), cm.body ?? "", cm.createdAt ?? Date.now()); postCommentMap.set(Number(cm.id), id); }
+
+  // Kosten, Anwesenheit
+  for (const a of t("attendance")) { const mid = mm(a.memberId); if (mid) await db.run("INSERT OR IGNORE INTO attendance (eventId, memberId, day) VALUES (?, ?, ?)", emf(a.eventId), mid, a.day); }
+  const expenseMap = new Map<number, number>();
+  for (const e of t("expenses")) { const mid = mm(e.paidById); if (!mid) continue; const dup = await exists("SELECT id FROM expenses WHERE title = ? AND createdAt = ?", e.title ?? "", e.createdAt ?? 0); if (dup) { expenseMap.set(Number(e.id), dup); continue; } const id = await db.insert("INSERT INTO expenses (eventId, title, amountCents, paidById, day, note, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)", emf(e.eventId), e.title ?? "", e.amountCents ?? 0, mid, n(e.day), e.note ?? "", e.createdAt ?? Date.now()); expenseMap.set(Number(e.id), id); bump("expenses"); }
+  for (const sh of t("expense_shares")) { const eid = expenseMap.get(Number(sh.expenseId)), mid = mm(sh.memberId); if (eid && mid) await db.run("INSERT OR IGNORE INTO expense_shares (expenseId, memberId) VALUES (?, ?)", eid, mid); }
+  for (const p of t("payments")) { const f = mm(p.fromId), to = mm(p.toId); if (f && to) { if (await exists("SELECT id FROM payments WHERE fromId = ? AND toId = ? AND createdAt = ?", f, to, p.createdAt ?? 0)) continue; await db.run("INSERT INTO payments (eventId, fromId, toId, amountCents, createdAt) VALUES (?, ?, ?, ?, ?)", emf(p.eventId), f, to, p.amountCents ?? 0, p.createdAt ?? Date.now()); bump("payments"); } }
+
+  // Ausrüstung (Name + Kategorie je Ausgabe)
+  const equipMap = new Map<number, number>();
+  const existingEquip = await db.all<{ id: number; eventId: number; name: string; category: string }>("SELECT id, eventId, name, category FROM equipment");
+  for (const e of t("equipment")) {
+    const evId = emf(e.eventId);
+    const ex = existingEquip.find(x => x.eventId === evId && key(x.name) === key(e.name) && key(x.category) === key(e.category));
+    if (ex) { equipMap.set(Number(e.id), ex.id); if (e.bringerId != null && mm(e.bringerId)) await db.run("UPDATE equipment SET bringerId = COALESCE(bringerId, ?), done = MAX(done, ?) WHERE id = ?", mm(e.bringerId), e.done ? 1 : 0, ex.id); continue; }
+    const id = await db.insert("INSERT INTO equipment (eventId, name, category, quantity, note, bringerId, done, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", evId, e.name, e.category ?? "Sonstiges", e.quantity ?? 1, e.note ?? "", mm(e.bringerId), e.done ? 1 : 0, e.createdAt ?? Date.now());
+    equipMap.set(Number(e.id), id); bump("equipment");
+  }
+
+  // Abstimmungen
+  const pollMap = new Map<number, number>();
+  for (const p of t("polls")) { const dup = await exists("SELECT id FROM polls WHERE eventId = ? AND createdAt = ?", emf(p.eventId), p.createdAt ?? 0); if (dup) { pollMap.set(Number(p.id), dup); continue; } const id = await db.insert("INSERT INTO polls (eventId, open, winnerGameId, createdAt, closedAt) VALUES (?, ?, ?, ?, ?)", emf(p.eventId), 0, gm(p.winnerGameId), p.createdAt ?? Date.now(), n(p.closedAt)); pollMap.set(Number(p.id), id); }
+  for (const v of t("poll_votes")) { const pid = pollMap.get(Number(v.pollId)), mid = mm(v.memberId), gid = gm(v.gameId); if (pid && mid && gid) await db.run("INSERT OR IGNORE INTO poll_votes (pollId, memberId, gameId) VALUES (?, ?, ?)", pid, mid, gid); }
+
+  // XP-Protokoll: refId je nach Typ auf die neuen IDs umsetzen
+  const refMap: Record<string, (v: number) => number | null | undefined> = {
+    game_played: v => sessionMap.get(v), game_added: v => gameMap.get(v), suggestion: v => sugMap.get(v), suggestion_adopted: v => sugMap.get(v),
+    forum_post: v => postMap.get(v), forum_comment: v => postCommentMap.get(v), suggestion_comment: v => sugCommentMap.get(v), equipment: v => equipMap.get(v),
+    expense: v => expenseMap.get(v), attendance: v => { const ev = em(Math.floor(v / 100)); return ev == null ? null : ev * 100 + (v % 100); }, vote: v => pollMap.get(v),
+  };
+  for (const x of t("xp_log")) {
+    const mid = mm(x.memberId); const f = refMap[x.type]; if (!mid || !f) continue;
+    const ref = f(Number(x.refId)); if (ref == null) continue;
+    const r = await db.run("INSERT OR IGNORE INTO xp_log (memberId, type, refId, amount, createdAt) VALUES (?, ?, ?, ?, ?)", mid, x.type, ref, x.amount ?? 0, x.createdAt ?? Date.now());
+    if (r.meta.changes) bump("xp");
+  }
+  return { ok: true, added };
 }
 
 // ---------------- Dispatcher

@@ -308,18 +308,30 @@ async function inviteDialog() {
 /** Admin: Export-Datei der Android-App einspielen (ersetzt alle Daten). */
 function importDialog() {
   const file = h("input", { type: "file", accept: "application/json,.json", class: "input" });
+  const merge = h("input", { type: "radio", name: "impmode", checked: true });
+  const replace = h("input", { type: "radio", name: "impmode" });
   modal({
     title: "Daten vom Handy importieren",
     body: h("div", {},
-      h("p", { class: "small" }, "In der Android-App: Host-Ansicht → „Daten exportieren“. Die Datei landet im Download-Ordner. Hier auswählen."),
-      h("p", { class: "small", style: { color: "#ff9a9a" } }, "Achtung: Alle Daten hier werden durch den Export ersetzt. Passwörter der Mitglieder bleiben gültig, alle Geräte müssen sich neu anmelden."),
-      field("Export-Datei", file)),
+      h("p", { class: "small" }, "Am einfachsten direkt aus der Android-App: Menü ⋮ oben rechts → „Handy-Daten in die Cloud übertragen“ (als Admin angemeldet). Alternativ hier eine Export-Datei wählen."),
+      field("Export-Datei", file),
+      h("div", { class: "pick-list" },
+        h("label", { class: "it" }, merge, h("div", { class: "grow" }, h("div", {}, "Zusammenführen (empfohlen)"), h("div", { class: "small muted" }, "Mitglieder, Spiele und LAN-Ausgaben werden über den Namen abgeglichen, der Rest angehängt. Nichts wird gelöscht."))),
+        h("label", { class: "it" }, replace, h("div", { class: "grow" }, h("div", {}, "Alles ersetzen"), h("div", { class: "small muted", style: { color: "#ff9a9a" } }, "Löscht den gesamten Cloud-Bestand und übernimmt den Export; alle Geräte müssen sich neu anmelden."))))),
     buttons: [{ label: "Abbrechen" }, { label: "Importieren", class: "primary", onClick: async () => {
       const f = file.files[0]; if (!f) { toast("Datei fehlt", "error"); return false; }
       let data; try { data = JSON.parse(await f.text()); } catch { toast("Keine gültige JSON-Datei", "error"); return false; }
-      const r = await api.post("/api/admin/import", data);
-      toast(`${r.rows} Datensätze importiert – bitte neu anmelden`, "success", 6000);
-      setTimeout(() => { store.logout().then(() => location.reload()); }, 1500);
+      if (replace.checked) {
+        if (!(await confirmDialog("Wirklich alles ersetzen?", "Der komplette Cloud-Bestand wird gelöscht.", { okLabel: "Ja, ersetzen" }))) return false;
+        const r = await api.post("/api/admin/import", data);
+        toast(`${r.rows} Datensätze importiert – bitte neu anmelden`, "success", 6000);
+        setTimeout(() => { store.logout().then(() => location.reload()); }, 1500);
+      } else {
+        const r = await api.post("/api/admin/merge", data);
+        const parts = Object.entries(r.added || {}).map(([k, v]) => `${k}: ${v}`).join(", ");
+        toast(`Zusammengeführt. Neu: ${parts || "nichts, alles war schon da"}`, "success", 7000);
+        await store.bootstrap(); renderRoute();
+      }
     } }],
   });
 }

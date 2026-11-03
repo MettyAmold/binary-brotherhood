@@ -44,9 +44,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,7 +78,22 @@ import at.binarybrotherhood.app.BuildConfig
 import at.binarybrotherhood.app.R
 import at.binarybrotherhood.app.server.LanServer
 import at.binarybrotherhood.app.server.ServerService
+import at.binarybrotherhood.app.domain.Repository
 import at.binarybrotherhood.app.update.UpdateManager
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import at.binarybrotherhood.app.update.UpdateState
 import at.binarybrotherhood.app.util.NetUtils
 
@@ -87,6 +107,43 @@ class MainActivity : ComponentActivity() {
     private var bound = false
     private var webView: WebView? = null
     private lateinit var updateManager: UpdateManager
+    /** Ergebnis- oder Fehlertext der Übertragung der Handy-Daten in die Cloud (null = kein Dialog) */
+    private var transferMessage by mutableStateOf<String?>(null)
+    private var transferRunning by mutableStateOf(false)
+
+    /** Liest das Login-Token der Web-App aus dem WebView (localStorage). */
+    private suspend fun webToken(): String? = suspendCancellableCoroutine { cont ->
+        val wv = webView ?: return@suspendCancellableCoroutine cont.resume(null)
+        wv.evaluateJavascript("localStorage.getItem('bb.token')") { v ->
+            cont.resume(v?.trim('"')?.takeIf { it.isNotBlank() && it != "null" })
+        }
+    }
+
+    /** Exportiert die lokale Datenbank des Handys und führt sie in der Cloud zusammen (Admin-Login nötig). */
+    private fun transferToCloud() {
+        if (transferRunning) return
+        transferRunning = true
+        lifecycleScope.launch {
+            transferMessage = try {
+                val token = webToken() ?: error("Bitte zuerst in der App als Admin anmelden.")
+                val json = withContext(Dispatchers.IO) { Repository(applicationContext).exportAll().toString() }
+                val client = HttpClient(OkHttp)
+                val res = client.post("${BuildConfig.CLOUD_URL}/api/admin/merge") {
+                    header("Authorization", "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody(json)
+                }
+                val body = res.bodyAsText()
+                client.close()
+                if (!res.status.isSuccess()) error(Regex("\"error\":\"([^\"]*)\"").find(body)?.groupValues?.get(1) ?: "Fehler ${res.status.value}")
+                val added = Regex("\"(\\w+)\":(\\d+)").findAll(body.substringAfter("\"added\":")).map { "${it.groupValues[1]}: ${it.groupValues[2]}" }.joinToString(", ")
+                "Zusammengeführt. Neu in der Cloud: ${added.ifBlank { "nichts, alles war schon vorhanden" }}"
+            } catch (e: Exception) {
+                "Übertragung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+            }
+            transferRunning = false
+        }
+    }
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -114,9 +171,19 @@ class MainActivity : ComponentActivity() {
         updateManager.check() // beim Start still prüfen; bei neuer Version leuchtet das Update-Symbol
         setContent {
             BinaryBrotherhoodTheme {
+                transferMessage?.let { msg ->
+                    AlertDialog(
+                        onDismissRequest = { transferMessage = null },
+                        confirmButton = { TextButton(onClick = { transferMessage = null; webView?.reload() }) { Text("OK") } },
+                        title = { Text("Handy-Daten in die Cloud") },
+                        text = { Text(msg) },
+                    )
+                }
                 HostScreen(
                     service = service,
                     updateManager = updateManager,
+                    onTransfer = { transferToCloud() },
+                    transferRunning = transferRunning,
                     onToggleServer = { s -> if (s.running.value) s.stopServer() else s.startServer() },
                     onReload = { webView?.reload() },
                     onShare = { shareAddress() },
@@ -195,6 +262,8 @@ class MainActivity : ComponentActivity() {
 private fun HostScreen(
     service: ServerService?,
     updateManager: UpdateManager,
+    onTransfer: () -> Unit,
+    transferRunning: Boolean,
     onToggleServer: (ServerService) -> Unit,
     onReload: () -> Unit,
     onShare: () -> Unit,
@@ -222,6 +291,8 @@ private fun HostScreen(
                 updateAvailable = updateState is UpdateState.Available || updateState is UpdateState.ReadyToInstall,
                 onHost = { showHost = !showHost },
                 onReload = onReload,
+                onTransfer = onTransfer,
+                transferRunning = transferRunning,
                 onUpdate = {
                     val s = updateManager.state.value
                     if (s is UpdateState.Idle || s is UpdateState.UpToDate || s is UpdateState.Error) { updateManager.reset(); updateManager.check() }
@@ -245,7 +316,8 @@ private fun HostScreen(
 }
 
 @Composable
-private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onHost: () -> Unit, onReload: () -> Unit, onUpdate: () -> Unit) {
+private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onHost: () -> Unit, onReload: () -> Unit, onUpdate: () -> Unit, onTransfer: () -> Unit, transferRunning: Boolean) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -255,6 +327,16 @@ private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onH
         Text("BINARY BROTHERHOOD", style = MaterialTheme.typography.titleMedium, color = Gold)
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onReload) { Icon(Icons.Default.Refresh, contentDescription = "Neu laden", tint = Muted) }
+        Box {
+            IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "Menü", tint = Muted) }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(if (transferRunning) "Übertrage …" else "Handy-Daten in die Cloud übertragen") },
+                    enabled = !transferRunning,
+                    onClick = { menuOpen = false; onTransfer() },
+                )
+            }
+        }
         IconButton(onClick = onUpdate) {
             Box {
                 Icon(painterResource(R.drawable.ic_update), contentDescription = "App-Update", tint = if (updateAvailable) Gold else Muted)
