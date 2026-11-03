@@ -90,6 +90,9 @@ interface SuggestionDao {
     @Query("SELECT * FROM suggestion_comments ORDER BY createdAt ASC") suspend fun allComments(): List<SuggestionCommentEntity>
     @Insert suspend fun insertComment(c: SuggestionCommentEntity): Long
     @Query("DELETE FROM suggestion_comments WHERE id = :id") suspend fun deleteComment(id: Long)
+    @Query("DELETE FROM suggestions") suspend fun deleteAll()
+    @Query("DELETE FROM suggestion_votes") suspend fun deleteAllVotes()
+    @Query("DELETE FROM suggestion_comments") suspend fun deleteAllComments()
     @Query("UPDATE suggestions SET scope = 'current' WHERE scope = 'next' AND adoptedGameId IS NULL") suspend fun promoteNextToCurrent()
 }
 
@@ -104,6 +107,8 @@ interface ForumDao {
     @Insert suspend fun insertComment(c: ForumCommentEntity): Long
     @Query("DELETE FROM forum_comments WHERE id = :id") suspend fun deleteComment(id: Long)
     @Query("DELETE FROM forum_comments WHERE postId = :postId") suspend fun deleteCommentsOfPost(postId: Long)
+    @Query("DELETE FROM forum_posts") suspend fun deleteAllPosts()
+    @Query("DELETE FROM forum_comments") suspend fun deleteAllComments()
 }
 
 @Dao
@@ -111,6 +116,7 @@ interface CostDao {
     @Query("SELECT * FROM attendance WHERE eventId = :eventId") suspend fun attendance(eventId: Long): List<AttendanceEntity>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertAttendance(a: List<AttendanceEntity>)
     @Query("DELETE FROM attendance WHERE eventId = :eventId AND memberId = :memberId") suspend fun clearAttendance(eventId: Long, memberId: Long)
+    @Query("DELETE FROM attendance WHERE eventId = :eventId") suspend fun clearAllAttendance(eventId: Long)
     @Query("SELECT * FROM expenses WHERE eventId = :eventId ORDER BY createdAt DESC") suspend fun expenses(eventId: Long): List<ExpenseEntity>
     @Query("SELECT * FROM expenses WHERE id = :id") suspend fun expense(id: Long): ExpenseEntity?
     @Insert suspend fun insertExpense(e: ExpenseEntity): Long
@@ -133,6 +139,7 @@ interface EquipmentDao {
     @Update suspend fun update(e: EquipmentEntity)
     @Query("DELETE FROM equipment WHERE id = :id") suspend fun delete(id: Long)
     @Query("SELECT COUNT(*) FROM equipment WHERE eventId = :eventId") suspend fun count(eventId: Long): Int
+    @Query("UPDATE equipment SET bringerId = NULL, done = 0 WHERE eventId = :eventId") suspend fun clearClaims(eventId: Long)
 }
 
 @Dao
@@ -144,6 +151,9 @@ interface PollDao {
     @Query("SELECT * FROM poll_votes WHERE pollId = :pollId") suspend fun votes(pollId: Long): List<PollVoteEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun vote(v: PollVoteEntity)
     @Query("DELETE FROM poll_votes WHERE pollId = :pollId AND memberId = :memberId") suspend fun unvote(pollId: Long, memberId: Long)
+    @Query("SELECT * FROM polls WHERE eventId = :eventId") suspend fun byEvent(eventId: Long): List<PollEntity>
+    @Query("DELETE FROM poll_votes WHERE pollId = :pollId") suspend fun clearVotes(pollId: Long)
+    @Query("DELETE FROM polls WHERE id = :id") suspend fun delete(id: Long)
 }
 
 @Dao
@@ -153,5 +163,7 @@ interface XpDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(x: XpLogEntity): Long
     @Query("DELETE FROM xp_log WHERE type = :type AND refId = :refId") suspend fun deleteByRef(type: String, refId: Long)
     @Query("DELETE FROM xp_log WHERE type = :type AND refId = :refId AND memberId = :memberId") suspend fun deleteByRefAndMember(type: String, refId: Long, memberId: Long)
+    @Query("DELETE FROM xp_log") suspend fun deleteAll()
+    @Query("DELETE FROM xp_log WHERE type IN (:types)") suspend fun deleteByTypes(types: List<String>)
     @Delete suspend fun delete(x: XpLogEntity)
 }

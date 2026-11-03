@@ -71,11 +71,18 @@ get("/api/admin/invite", async c => { requireAdmin(c); return { code: await c.re
 post("/api/admin/invite", async c => { requireAdmin(c); return { code: await c.repo.regenerateInviteCode() }; });
 post("/api/admin/members/{id}/admin", async c => { requireAdmin(c); const r = await c.body<{ admin: boolean }>(); const m = await c.repo.setAdmin(id(c), !!r.admin); await c.broadcast("members"); return m; });
 get("/api/admin/export", async c => { requireAdmin(c); return exportAll(c); });
+post("/api/admin/reset", async c => {
+  requireAdmin(c);
+  const r = await c.repo.resetEvent(await c.body());
+  for (const t of ["games", "sessions", "poll", "costs", "equipment", "members", "suggestions", "forum"]) await c.broadcast(t);
+  return r;
+});
 post("/api/admin/import", async c => { requireAdmin(c); const data = await c.body<ExportData>(); const r = await importAll(c, data); for (const t of ["members", "games", "sessions", "suggestions", "forum", "costs", "equipment", "events", "shares"]) await c.broadcast(t); return r; });
 
 // ---------------- Allgemein
 get("/api/bootstrap", async c => {
   const ev = await c.repo.ensureCurrentEvent();
+  await c.repo.seedDefaultEquipmentIfEmpty(); // wie in der Android-App beim ersten Start
   return { event: { id: ev.id, name: ev.name, year: ev.year, startDate: ev.startDate, days: ev.days, isCurrent: true }, events: await c.repo.events(), members: await c.repo.members(), serverTime: Date.now(), appName: c.env.APP_NAME };
 });
 get("/api/host", async c => ({ mode: "cloud", addresses: [c.url.host], port: 443, clients: 0, version: VERSION, dbPath: "Cloudflare D1" }));

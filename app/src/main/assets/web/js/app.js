@@ -1,5 +1,5 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
-import { h, mount, avatar, modal, toast, field, input, checkbox } from "./ui.js";
+import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api, authHeaders } from "./api.js";
 import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
@@ -180,6 +180,7 @@ function profileMenu() {
       h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
       (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); soundsDialog(); } }, h("span", {}, "🔊"), h("span", { class: "grow" }, "Glücksrad-Sounds")) : null,
+      (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); resetDialog(); } }, h("span", {}, "🧹"), h("span", { class: "grow" }, "LAN zurücksetzen")) : null,
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
@@ -206,6 +207,33 @@ export function changePasswordDialog() {
     } }],
   });
   chainEnter([old, pw, pw2]);
+}
+
+/** Admin/Host: aktuelle LAN-Party zurücksetzen – Spiele und Mitglieder bleiben, Auswahl was weg soll. */
+function resetDialog() {
+  const opts = [
+    ["sessions", true, "Gespielte Runden", "Historie und laufende Runden dieser LAN, Sterne „nächste Runde“, Abstimmungen, letzter Dreh am Rad"],
+    ["costs", true, "Kosten und Anwesenheit", "Einkäufe, Ausgleichszahlungen und Anwesenheitstage dieser LAN"],
+    ["equipment", true, "Ausrüstung: Zusagen", "Wer bringt was und Erledigt-Haken; die Liste selbst bleibt"],
+    ["xp", false, "XP und Level aller Mitglieder", "Komplettes XP-Protokoll löschen, alle fangen bei Level 1 an"],
+    ["posts", false, "Vorschläge und Forum", "Alle Vorschläge, Beiträge und Kommentare löschen"],
+  ];
+  const boxes = opts.map(([key, def, label, hint]) => ({ key, box: h("input", { type: "checkbox", checked: def }), label, hint }));
+  modal({
+    title: "LAN zurücksetzen",
+    body: h("div", {},
+      h("p", { class: "small" }, "Spiele und Mitglieder bleiben immer erhalten. Betrifft die aktuelle Ausgabe „", store.event?.name ?? "", "“."),
+      h("div", { class: "pick-list" }, boxes.map(b => h("label", { class: "it" }, b.box, h("div", { class: "grow" }, h("div", {}, b.label), h("div", { class: "small muted" }, b.hint))))),
+      h("p", { class: "small", style: { color: "#ff9a9a", marginTop: "10px" } }, "Das lässt sich nicht rückgängig machen.")),
+    buttons: [{ label: "Abbrechen" }, { label: "Zurücksetzen", class: "danger", onClick: async () => {
+      const body = Object.fromEntries(boxes.map(b => [b.key, b.box.checked]));
+      if (!Object.values(body).some(Boolean)) { toast("Nichts ausgewählt", "error"); return false; }
+      if (!(await confirmDialog("Wirklich zurücksetzen?", "Die gewählten Daten der aktuellen LAN werden gelöscht.", { okLabel: "Ja, zurücksetzen" }))) return false;
+      const r = await api.post("/api/admin/reset", body);
+      toast(`Zurückgesetzt: ${r.deleted} Datensätze entfernt`, "success", 5000);
+      renderRoute();
+    } }],
+  });
 }
 
 /** Admin/Host: eigene Klänge fürs Glücksrad hochladen, probehören, zurücksetzen. */

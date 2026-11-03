@@ -643,6 +643,56 @@ export class Repo {
   }
   async deleteSound(kind: string) { await this.db.run("DELETE FROM sounds WHERE kind = ?", kind); }
 
+  // ================================================================ LAN zurücksetzen (Spiele und Mitglieder bleiben)
+  async resetEvent(o: { sessions?: boolean; costs?: boolean; equipment?: boolean; xp?: boolean; posts?: boolean }) {
+    const ev = await this.ensureCurrentEvent();
+    const st: { sql: string; params?: unknown[] }[] = [];
+    const count = async (sql: string, ...p: unknown[]) => (await this.db.first<{ n: number }>(sql, ...p))!.n;
+    let deleted = 0;
+    if (o.sessions) {
+      deleted += await count("SELECT COUNT(*) AS n FROM sessions WHERE eventId = ?", ev.id) + await count("SELECT COUNT(*) AS n FROM polls WHERE eventId = ?", ev.id);
+      st.push(
+        { sql: "DELETE FROM xp_log WHERE type = 'game_played' AND refId IN (SELECT id FROM sessions WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM session_participants WHERE sessionId IN (SELECT id FROM sessions WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM sessions WHERE eventId = ?", params: [ev.id] },
+        { sql: "DELETE FROM xp_log WHERE type = 'vote' AND refId IN (SELECT id FROM polls WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM poll_votes WHERE pollId IN (SELECT id FROM polls WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM polls WHERE eventId = ?", params: [ev.id] },
+        { sql: "UPDATE games SET selectedForNext = 0" },
+        { sql: "DELETE FROM settings WHERE key = 'lastSpin'" },
+      );
+    }
+    if (o.costs) {
+      deleted += await count("SELECT COUNT(*) AS n FROM expenses WHERE eventId = ?", ev.id) + await count("SELECT COUNT(*) AS n FROM payments WHERE eventId = ?", ev.id) + await count("SELECT COUNT(*) AS n FROM attendance WHERE eventId = ?", ev.id);
+      st.push(
+        { sql: "DELETE FROM xp_log WHERE type = 'expense' AND refId IN (SELECT id FROM expenses WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM expense_shares WHERE expenseId IN (SELECT id FROM expenses WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM expenses WHERE eventId = ?", params: [ev.id] },
+        { sql: "DELETE FROM payments WHERE eventId = ?", params: [ev.id] },
+        { sql: "DELETE FROM xp_log WHERE type = 'attendance' AND refId BETWEEN ? AND ?", params: [ev.id * 100 + 1, ev.id * 100 + 99] },
+        { sql: "DELETE FROM attendance WHERE eventId = ?", params: [ev.id] },
+      );
+    }
+    if (o.equipment) {
+      deleted += await count("SELECT COUNT(*) AS n FROM equipment WHERE eventId = ? AND (bringerId IS NOT NULL OR done = 1)", ev.id);
+      st.push(
+        { sql: "DELETE FROM xp_log WHERE type = 'equipment' AND refId IN (SELECT id FROM equipment WHERE eventId = ?)", params: [ev.id] },
+        { sql: "UPDATE equipment SET bringerId = NULL, done = 0 WHERE eventId = ?", params: [ev.id] },
+      );
+    }
+    if (o.posts) {
+      deleted += await count("SELECT COUNT(*) AS n FROM suggestions") + await count("SELECT COUNT(*) AS n FROM forum_posts");
+      st.push(
+        { sql: "DELETE FROM xp_log WHERE type IN ('suggestion', 'suggestion_adopted', 'suggestion_comment', 'forum_post', 'forum_comment')" },
+        { sql: "DELETE FROM suggestion_votes" }, { sql: "DELETE FROM suggestion_comments" }, { sql: "DELETE FROM suggestions" },
+        { sql: "DELETE FROM forum_comments" }, { sql: "DELETE FROM forum_posts" },
+      );
+    }
+    if (o.xp) { deleted += await count("SELECT COUNT(*) AS n FROM xp_log"); st.push({ sql: "DELETE FROM xp_log" }); }
+    await this.db.batch(st);
+    return { ok: true, deleted };
+  }
+
   // ================================================================ Einstellungen / Admin
   async inviteCode() { return (await this.db.setting("inviteCode")) ?? (await this.regenerateInviteCode()); }
   async regenerateInviteCode() { const { randomCode } = await import("./auth"); const c = randomCode(8); await this.db.setSetting("inviteCode", c); return c; }

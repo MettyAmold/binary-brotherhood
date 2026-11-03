@@ -312,6 +312,15 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             post("/reset/{id}") { call.requireHost(); auth.resetPassword(call.id()); broadcast("members"); call.respond(OkDto()) }
         }
 
+        // ---- Admin (Host): aktuelle LAN zurücksetzen
+        post("/admin/reset") {
+            call.requireHost()
+            val r = call.receive<ResetRequest>()
+            val n = repo.resetEvent(Repository.ResetOptions(r.sessions, r.costs, r.equipment, r.xp, r.posts))
+            listOf("games", "sessions", "poll", "costs", "equipment", "members", "suggestions", "forum").forEach { broadcast(it) }
+            call.respond(buildJsonObject { put("ok", true); put("deleted", n) })
+        }
+
         // ---- Mitglieder
         route("/members") {
             get { call.respond(repo.members()) }

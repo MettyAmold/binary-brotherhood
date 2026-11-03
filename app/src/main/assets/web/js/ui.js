@@ -119,9 +119,10 @@ export function avatar(member, size = "") {
   if (!member) return h("div", { class: cls, style: { background: "#333" } }, "?");
   if (member.hasAvatar || member.authorHasAvatar) {
     const id = member.id ?? member.authorId;
-    const v = member.createdAt || "";
+    // avatarUrl enthält den Upload-Zeitstempel, damit der Browser nach einem neuen Bild nicht das alte aus dem Cache zeigt
+    const src = member.avatarUrl || `/api/members/${id}/avatar?v=${member.createdAt || ""}`;
     return h("div", { class: cls, style: { borderColor: member.color || member.authorColor || "" } },
-      h("img", { src: `/api/members/${id}/avatar?v=${v}`, alt: "", loading: "lazy" }));
+      h("img", { src, alt: "", loading: "lazy" }));
   }
   const color = member.color || member.authorColor || "#8e97a8";
   return h("div", { class: cls, style: { background: color, borderColor: color }, title: member.name || member.authorName }, initials(member.name || member.authorName));

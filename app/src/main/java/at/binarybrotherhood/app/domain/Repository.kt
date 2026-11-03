@@ -140,6 +140,41 @@ class Repository(private val context: Context, private val db: AppDatabase = App
 
     private fun EventEntity.toDto() = EventDto(id, name, year, startDate, days, isCurrent)
 
+    // ---------------------------------------------------------------- LAN zurücksetzen (Spiele und Mitglieder bleiben)
+
+    data class ResetOptions(val sessions: Boolean = false, val costs: Boolean = false, val equipment: Boolean = false, val xp: Boolean = false, val posts: Boolean = false)
+
+    suspend fun resetEvent(o: ResetOptions): Int {
+        val ev = currentEvent()
+        var deleted = 0
+        if (o.sessions) {
+            for (s in db.sessions().byEvent(ev.id)) { deleteSession(s.id); deleted++ }
+            for (p in db.polls().byEvent(ev.id)) { db.xp().deleteByRef(XpRules.VOTE, p.id); db.polls().clearVotes(p.id); db.polls().delete(p.id); deleted++ }
+            db.games().clearSelection()
+            lastSpin = null
+        }
+        if (o.costs) {
+            for (e in db.costs().expenses(ev.id)) { deleteExpense(e.id); deleted++ }
+            for (p in db.costs().payments(ev.id)) { db.costs().deletePayment(p.id); deleted++ }
+            val att = db.costs().attendance(ev.id)
+            for (a in att) db.xp().deleteByRefAndMember(XpRules.ATTENDANCE, ev.id * 100 + a.day, a.memberId)
+            db.costs().clearAllAttendance(ev.id); deleted += att.size
+        }
+        if (o.equipment) {
+            val items = db.equipment().byEvent(ev.id)
+            for (e in items) if (e.bringerId != null || e.done) { db.xp().deleteByRef(XpRules.EQUIPMENT_BROUGHT, e.id); deleted++ }
+            db.equipment().clearClaims(ev.id)
+        }
+        if (o.posts) {
+            deleted += db.suggestions().all().size + db.forum().posts().size
+            db.xp().deleteByTypes(listOf(XpRules.SUGGESTION_CREATED, XpRules.SUGGESTION_ADOPTED, XpRules.SUGGESTION_COMMENT, XpRules.FORUM_POST, XpRules.FORUM_COMMENT))
+            db.suggestions().deleteAllVotes(); db.suggestions().deleteAllComments(); db.suggestions().deleteAll()
+            db.forum().deleteAllComments(); db.forum().deleteAllPosts()
+        }
+        if (o.xp) { deleted += db.xp().all().size; db.xp().deleteAll() }
+        return deleted
+    }
+
     // ---------------------------------------------------------------- Klänge (Host lädt eigene Audiodateien hoch)
 
     private val soundDir: File get() = File(context.filesDir, "sounds").also { it.mkdirs() }
