@@ -104,7 +104,6 @@ export async function renderWheel(main) {
     mount(winnerBox);
     wheel.setSegments(segs);
     drawSide();
-    if (s.startedByName && !(store.me && store.me.name === s.startedByName)) toast(`${s.startedByName} dreht am Rad …`);
     const elapsed = Date.now() - s.startedAt;
     await wheel.spinTo(s.winnerGameId, s.durationMs, s.turns, s.spinId, Math.max(0, Math.min(elapsed, s.durationMs - 200)));
     animating = false;

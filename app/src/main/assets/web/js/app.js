@@ -2,6 +2,7 @@
 import { h, mount, avatar, modal, toast, field, input, checkbox } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api } from "./api.js";
+import { initAudio, playSound, banner, systemNotify, requestNotificationPermission } from "./notify.js";
 import { renderGames } from "./views/games.js";
 import { renderWheel } from "./views/wheel.js";
 import { renderSuggestions } from "./views/suggestions.js";
@@ -178,6 +179,7 @@ function profileMenu() {
     body: h("div", { class: "pick-list" },
       h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
+      ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
       h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
@@ -279,6 +281,27 @@ on("connection", (ok) => { const c = document.getElementById("conn"); if (c) c.c
 on("members", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("me", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("events", () => { const chip = document.querySelector(".event-chip"); if (chip && store.event) chip.textContent = store.event.name; });
+
+// ---------- Glücksrad: alle angemeldeten Browser bekommen Banner + Klang ----------
+initAudio();
+let lastWheelSpin = null;
+on("wheel", async (s) => {
+  if (!s || !s.spinId || s.spinId === lastWheelSpin) return;
+  lastWheelSpin = s.spinId;
+  const who = s.startedByName ? `${s.startedByName} dreht am Glücksrad …` : "Das Glücksrad dreht sich …";
+  playSound("spin");
+  const b = banner({ icon: "🎡", title: who, text: "Gleich steht das nächste Spiel fest.", href: "#/wheel", ms: Math.max(4000, s.durationMs) + 15000 });
+  systemNotify("🎡 Glücksrad", who);
+  let winner = null;
+  try { winner = (await api.get("/api/games", { silent: true })).find(g => g.id === s.winnerGameId) || null; } catch { /* egal */ }
+  const remaining = Math.max(0, s.startedAt + s.durationMs - Date.now());
+  setTimeout(() => {
+    const text = winner ? `Das Rad sagt: ${winner.name}!` : "Das Rad hat entschieden!";
+    playSound("winner");
+    b.update({ icon: "🏆", title: text, text: "Alle an die Rechner!", kind: "win", ms: 15000 });
+    systemNotify("🏆 Nächstes Spiel", text);
+  }, remaining);
+});
 
 // Globale Fehler sichtbar machen (hilft beim Debuggen auf dem Handy)
 window.addEventListener("unhandledrejection", (e) => { if (e.reason && e.reason.status === undefined && e.reason.message) toast(e.reason.message, "error"); });
