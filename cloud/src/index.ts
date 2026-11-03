@@ -3,6 +3,7 @@
 import { Db, Env } from "./db";
 import { Repo, toBytes } from "./repo";
 import { resolveSession, issueToken, login, changePassword, resetPassword, validatePassword, hashPassword, randomCode, Session } from "./auth";
+import { Tournaments } from "./tournaments";
 import { steamSearch, steamDetails, steamAppIdFromUrl } from "./steam";
 import { HttpError, Unauthorized, Forbidden, BadRequest, NotFound, gameKey } from "./logic";
 import changelog from "./changelog.json";
@@ -364,13 +365,32 @@ post("/api/sounds/{kind}", async c => {
 });
 del("/api/sounds/{kind}", async c => { requireAdmin(c); await c.repo.deleteSound(soundKind(c)); await c.broadcast("sounds"); return c.repo.sounds(); });
 
+// ---------------- Turniere
+const tour = (c: Ctx) => new Tournaments(c.db);
+const requireTourManager = async (c: Ctx) => { if (!(await tour(c).canManage(id(c), session(c).member.id, isAdmin(c)))) throw new Forbidden("Nur wer das Turnier angelegt hat oder ein Admin darf das"); };
+get("/api/tournaments", async c => tour(c).list(c.url.searchParams.get("all") ? null : (await c.repo.ensureCurrentEvent()).id));
+get("/api/tournaments/{id}", async c => tour(c).get(id(c)));
+post("/api/tournaments", async c => { const t = await tour(c).create((await c.repo.ensureCurrentEvent()).id, await c.body(), session(c).member.id); await c.broadcast("tournaments"); return t; });
+put("/api/tournaments/{id}", async c => { await requireTourManager(c); const t = await tour(c).update(id(c), await c.body()); await c.broadcast("tournaments"); return t; });
+del("/api/tournaments/{id}", async c => { await requireTourManager(c); await tour(c).remove(id(c)); await c.broadcast("tournaments"); await c.broadcast("members"); return ok(); });
+post("/api/tournaments/{id}/start", async c => { await requireTourManager(c); const t = await tour(c).start(id(c)); await c.broadcast("tournaments"); return t; });
+post("/api/tournaments/{id}/next-round", async c => { await requireTourManager(c); const t = await tour(c).nextRound(id(c)); await c.broadcast("tournaments"); return t; });
+put("/api/tournaments/{id}/matches/{mid}", async c => {
+  const mid = Number(c.params.mid);
+  if (!(await tour(c).canReport(id(c), mid, session(c).member.id, isAdmin(c)))) throw new Forbidden("Ergebnisse tragen Turnierleitung, Admins oder die beteiligten Spieler ein");
+  const r = await c.body<{ scoreA: number | null; scoreB: number | null }>();
+  const t = await tour(c).report(id(c), mid, r.scoreA == null ? null : Number(r.scoreA), r.scoreB == null ? null : Number(r.scoreB));
+  await c.broadcast("tournaments"); if (t.status === "done") await c.broadcast("members");
+  return t;
+});
+
 // ---------------- Steam
 get("/api/steam/search", async c => { try { return await steamSearch(c.url.searchParams.get("q") ?? ""); } catch (e) { throw new BadRequest(`Steam nicht erreichbar: ${(e as Error).message}`); } });
 get("/api/steam/app/{id}", async c => { let d; try { d = await steamDetails(id(c)); } catch (e) { throw new BadRequest(`Steam nicht erreichbar: ${(e as Error).message}`); } if (!d) throw new NotFound("Steam-App nicht gefunden"); return d; });
 get("/api/steam/parse", async c => { const a = steamAppIdFromUrl(c.url.searchParams.get("url") ?? ""); if (!a) throw new BadRequest("Keine Steam-App-ID im Link gefunden"); return { appId: a }; });
 
 // ---------------- Export / Import (Datenumzug vom Handy)
-const TABLES = ["events", "members", "auth_tokens", "games", "shares", "sessions", "session_participants", "suggestions", "suggestion_votes", "suggestion_comments", "forum_posts", "forum_comments", "attendance", "expenses", "expense_shares", "payments", "equipment", "polls", "poll_votes", "xp_log"] as const;
+const TABLES = ["events", "members", "auth_tokens", "games", "shares", "sessions", "session_participants", "suggestions", "suggestion_votes", "suggestion_comments", "forum_posts", "forum_comments", "attendance", "expenses", "expense_shares", "payments", "equipment", "polls", "poll_votes", "xp_log", "tournaments", "tournament_teams", "tournament_matches"] as const;
 interface ExportData { format: string; exportedAt: number; tables: Record<string, Record<string, unknown>[]>; avatars?: Record<string, string> }
 async function exportAll(c: Ctx): Promise<ExportData> {
   const tables: Record<string, Record<string, unknown>[]> = {};

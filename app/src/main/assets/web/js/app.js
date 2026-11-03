@@ -5,6 +5,7 @@ import { api, authHeaders } from "./api.js";
 import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
 import { renderGames } from "./views/games.js";
 import { renderWheel } from "./views/wheel.js";
+import { renderTournaments } from "./views/tournaments.js";
 import { renderSuggestions } from "./views/suggestions.js";
 import { renderMembers } from "./views/members.js";
 import { renderForum } from "./views/forum.js";
@@ -15,6 +16,7 @@ import { renderOrganisation } from "./views/organisation.js";
 const routes = [
   { id: "games", label: "Spiele", icon: "🎮", render: renderGames },
   { id: "wheel", label: "Glücksrad", icon: "🎡", render: renderWheel },
+  { id: "tournaments", label: "Turniere", icon: "🏆", render: renderTournaments },
   { id: "suggestions", label: "Vorschläge", icon: "💡", render: renderSuggestions },
   { id: "members", label: "Mitglieder", icon: "🛡️", render: renderMembers },
   { id: "forum", label: "Forum", icon: "💬", render: renderForum },

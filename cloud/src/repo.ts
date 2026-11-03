@@ -707,6 +707,10 @@ export class Repo {
         { sql: "DELETE FROM polls WHERE eventId = ?", params: [ev.id] },
         { sql: "UPDATE games SET selectedForNext = 0" },
         { sql: "DELETE FROM settings WHERE key = 'lastSpin'" },
+        { sql: "DELETE FROM xp_log WHERE type = 'tournament_win' AND refId IN (SELECT id FROM tournaments WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM tournament_matches WHERE tournamentId IN (SELECT id FROM tournaments WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM tournament_teams WHERE tournamentId IN (SELECT id FROM tournaments WHERE eventId = ?)", params: [ev.id] },
+        { sql: "DELETE FROM tournaments WHERE eventId = ?", params: [ev.id] },
       );
     }
     if (o.costs) {

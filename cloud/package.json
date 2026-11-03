@@ -9,11 +9,13 @@
     "migrate:local": "wrangler d1 migrations apply binary-brotherhood --local",
     "migrate:remote": "wrangler d1 migrations apply binary-brotherhood --remote",
     "typecheck": "tsc --noEmit",
-    "changelog": "node scripts/changelog.mjs"
+    "changelog": "node scripts/changelog.mjs",
+    "test": "node test/tournament.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261103.1",
     "typescript": "^5.6.3",
     "wrangler": "^4.40.0"
-  }
+  },
+  "type": "module"
 }

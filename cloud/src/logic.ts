@@ -4,17 +4,17 @@
 export const XP = {
   GAME_PLAYED: "game_played", GAME_ADDED: "game_added", SUGGESTION_CREATED: "suggestion", SUGGESTION_ADOPTED: "suggestion_adopted",
   FORUM_POST: "forum_post", FORUM_COMMENT: "forum_comment", SUGGESTION_COMMENT: "suggestion_comment", EQUIPMENT_BROUGHT: "equipment",
-  EXPENSE_PAID: "expense", ATTENDANCE: "attendance", VOTE: "vote",
+  EXPENSE_PAID: "expense", ATTENDANCE: "attendance", VOTE: "vote", TOURNAMENT_WIN: "tournament_win",
 } as const;
 
 const XP_AMOUNT: Record<string, number> = {
   game_played: 50, game_added: 20, suggestion: 15, suggestion_adopted: 40, forum_post: 10, forum_comment: 5,
-  suggestion_comment: 5, equipment: 25, expense: 15, attendance: 30, vote: 5,
+  suggestion_comment: 5, equipment: 25, expense: 15, attendance: 30, vote: 5, tournament_win: 100,
 };
 const XP_LABEL: Record<string, string> = {
   game_played: "Spiel gespielt", game_added: "Spiel hinzugefügt", suggestion: "Vorschlag eingereicht", suggestion_adopted: "Vorschlag übernommen",
   forum_post: "Forum-Beitrag", forum_comment: "Forum-Kommentar", suggestion_comment: "Kommentar zu Vorschlag", equipment: "Ausrüstung mitgebracht",
-  expense: "Einkauf vorgestreckt", attendance: "Anwesenheitstag", vote: "Abgestimmt",
+  expense: "Einkauf vorgestreckt", attendance: "Anwesenheitstag", vote: "Abgestimmt", tournament_win: "Turnier gewonnen",
 };
 export const xpAmount = (type: string) => XP_AMOUNT[type] ?? 0;
 export const xpLabel = (type: string) => XP_LABEL[type] ?? type;
