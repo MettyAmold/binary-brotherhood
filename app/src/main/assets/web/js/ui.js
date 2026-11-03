@@ -1,4 +1,5 @@
 // DOM-Helfer, Modale, Toasts und Formatierung.
+import { currentRealm } from "./api.js";
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -129,7 +130,7 @@ export function avatar(member, size = "") {
   const id = isAuthor ? member.authorId : member.id;
   const has = isAuthor ? member.authorHasAvatar : member.hasAvatar;
   if (has && id != null) {
-    const src = member.avatarUrl || avatarUrls.get(id) || `/api/members/${id}/avatar`;
+    const src = member.avatarUrl || avatarUrls.get(id) || `/api/members/${id}/avatar?realm=${encodeURIComponent(currentRealm())}`;
     return h("div", { class: cls, style: { borderColor: member.color || member.authorColor || "" } },
       h("img", { src, alt: "", loading: "lazy" }));
   }

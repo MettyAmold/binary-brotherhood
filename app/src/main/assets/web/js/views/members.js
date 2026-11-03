@@ -88,7 +88,7 @@ export async function renderMembers(main, params) {
       ),
       h("div", { class: "card" }, h("h3", {}, "Statistik"),
         h("div", { class: "stat-grid", style: { marginTop: "10px" } },
-          stat(stats.gamesPlayed, "Runden gespielt"), stat(stats.attendanceDays, "LAN-Tage"), stat(stats.forumPosts, "Beiträge"),
+          stat(stats.gamesPlayed, "Runden gespielt"), store.lan ? stat(stats.attendanceDays, "LAN-Tage") : null, stat(stats.forumPosts, "Beiträge"),
           stat(stats.comments, "Kommentare"), stat(stats.suggestions, "Vorschläge"), stat(stats.equipmentBrought, "Mitgebracht"), stat(stats.expensesPaid, "Einkäufe"),
         ),
         stats.favoriteGame ? h("div", { class: "small muted", style: { marginTop: "10px" } }, "Lieblingsspiel: ", h("strong", { class: "gold" }, stats.favoriteGame)) : null,

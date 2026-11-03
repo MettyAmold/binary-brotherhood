@@ -1,4 +1,5 @@
-# BINARY BROTHERHOOD in der Cloud: Worker (API) + statische Web-App + D1 (SQLite) + Durable Object für Live-Updates
+# BINARY BROTHERHOOD in der Cloud: Worker + statische Web-App; je Realm ein Durable Object mit eigener SQLite-DB.
+# D1 enthält nur das Realm-Verzeichnis (und den Altbestand aus der Zeit vor den Realms).
 name = "binary-brotherhood"
 main = "src/index.ts"
 compatibility_date = "2025-10-01"
@@ -14,13 +15,24 @@ database_name = "binary-brotherhood"
 database_id = "bddfd310-eae0-4798-b9be-8b80d189e25e"
 migrations_dir = "migrations"
 
+# Schema je Realm als Text einbinden
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
 [[durable_objects.bindings]]
-name = "HUB"
-class_name = "Hub"
+name = "REALM"
+class_name = "Realm"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Hub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Realm"]
+deleted_classes = ["Hub"]
 
 [vars]
 APP_NAME = "BINARY BROTHERHOOD"

@@ -1,7 +1,7 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
 import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog, initials, dayLabel } from "./ui.js";
 import { store, on, connect } from "./store.js";
-import { api, authHeaders } from "./api.js";
+import { api, authHeaders, currentRealm, setRealm } from "./api.js";
 import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
 import { renderGames } from "./views/games.js";
 import { renderWheel } from "./views/wheel.js";
@@ -20,10 +20,13 @@ const routes = [
   { id: "suggestions", label: "Vorschläge", icon: "💡", render: renderSuggestions },
   { id: "members", label: "Mitglieder", icon: "🛡️", render: renderMembers },
   { id: "forum", label: "Forum", icon: "💬", render: renderForum },
-  { id: "costs", label: "Kosten", icon: "💰", render: renderCosts },
-  { id: "equipment", label: "Ausrüstung", icon: "🎒", render: renderEquipment },
-  { id: "organisation", label: "LAN-Party", icon: "📅", render: renderOrganisation },
+  { id: "costs", label: "Kosten", icon: "💰", render: renderCosts, lan: true },
+  { id: "equipment", label: "Ausrüstung", icon: "🎒", render: renderEquipment, lan: true },
+  { id: "organisation", label: "LAN-Party", icon: "📅", render: renderOrganisation, lan: true },
 ];
+/** Online-Realms brauchen keine LAN-Party, Kosten, Ausrüstung oder Freigaben. */
+const activeRoutes = () => routes.filter(r => !r.lan || store.lan);
+const isLegacyRealm = () => currentRealm() === "binary-brotherhood";
 
 const root = document.getElementById("app");
 let currentCleanup = null;
@@ -31,21 +34,23 @@ let currentCleanup = null;
 function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [id, ...rest] = hash.split("/");
-  return { route: routes.find(r => r.id === id) || routes[0], params: rest };
+  const list = activeRoutes();
+  return { route: list.find(r => r.id === id) || list[0], params: rest };
 }
 
 function renderShell() {
   const { route } = currentRoute();
   const header = h("header", { class: "header" },
     h("img", { class: "logo", src: "/logo.png", alt: "" }),
-    h("div", { class: "brand" }, h("div", { class: "title" }, "BINARY BROTHERHOOD"), h("div", { class: "sub" }, "Ctrl Alt Delirium · Est. 2017")),
+    h("div", { class: "brand" }, h("div", { class: "title" }, store.realm?.name || "BINARY BROTHERHOOD"),
+      h("div", { class: "sub" }, isLegacyRealm() ? "Ctrl Alt Delirium · Est. 2017" : store.lan ? "LAN-Party" : "Online-Spielesuche")),
     h("div", { class: "spacer" }),
-    store.event ? h("a", { class: "event-chip", href: "#/organisation" }, store.event.name) : null,
+    store.event && store.lan ? h("a", { class: "event-chip", href: "#/organisation" }, store.event.name) : null,
     discordChip(),
     onlineChip(),
     meChip(),
   );
-  const nav = h("nav", { class: "nav" }, routes.map(r =>
+  const nav = h("nav", { class: "nav" }, activeRoutes().map(r =>
     h("a", { href: `#/${r.id}`, class: r.id === route.id ? "active" : "" }, h("span", { class: "ico" }, r.icon), h("span", {}, r.label))
   ));
   const main = h("main", { class: "main", id: "main" });
@@ -243,15 +248,102 @@ function showPasswordToggle(...inputs) {
   return checkbox("Passwort anzeigen", { onChange: (e) => inputs.forEach(i => { i.type = e.target.checked ? "text" : "password"; }) });
 }
 
+const KIND_LABEL = { lan: "🖥️ LAN-Party", online: "🌐 Online-Spielesuche" };
+
+/** Erster Schritt beim Login: Realm wählen oder neu gründen. Jeder Realm ist eine eigene Gruppe. */
+async function renderRealmPicker(message) {
+  let realms = [];
+  try { realms = await api.get("/api/realms", { silent: true }); } catch { mount(root, offlineGate()); return; }
+  const choose = (r) => { setRealm(r.slug); renderLogin(); };
+  mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
+    h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
+    message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null,
+    h("p", { class: "muted small" }, "Wähle deinen Realm. Jeder Realm ist eine eigene Gruppe mit eigenen Mitgliedern, Spielen und Forum."),
+    h("div", { class: "pick-list" }, realms.length
+      ? realms.map(r => h("div", { class: "it", onClick: () => choose(r) },
+          h("div", { class: "grow" }, h("div", {}, r.name), h("div", { class: "small muted" }, KIND_LABEL[r.kind] || r.kind)),
+          h("span", { class: "muted" }, "›")))
+      : h("div", { class: "muted small" }, "Noch keine Realms. Gründe den ersten!")),
+    h("hr", { class: "sep" }),
+    h("button", { class: "btn block", onClick: createRealmDialog }, "Neuen Realm gründen"),
+    inAndroidApp ? null : h("div", { style: { marginTop: "10px" } }, apkLink("btn ghost block")),
+  )));
+}
+
+function kindPicker(current = "lan") {
+  const radios = {};
+  const opt = (kind, title, hint) => {
+    radios[kind] = h("input", { type: "radio", name: "realmkind", checked: current === kind });
+    return h("label", { class: "it" }, radios[kind], h("div", { class: "grow" }, h("div", {}, title), h("div", { class: "small muted" }, hint)));
+  };
+  const el = h("div", { class: "pick-list" },
+    opt("lan", "🖥️ LAN-Party", "Mit LAN-Ausgaben, Anwesenheitstagen, Kosten teilen, Ausrüstung und Spiele-Freigaben."),
+    opt("online", "🌐 Online-Spielesuche", "Nur Spiele, Glücksrad, Turniere, Vorschläge, Forum und Discord – ohne LAN-Organisation."));
+  return { el, value: () => (radios.online.checked ? "online" : "lan") };
+}
+
+function createRealmDialog() {
+  const name = input({ placeholder: "z. B. Freitagsrunde", maxlength: 60 });
+  const kind = kindPicker("lan");
+  modal({
+    title: "Neuen Realm gründen",
+    body: h("div", {},
+      h("p", { class: "muted small" }, "Ein Realm ist komplett unabhängig von den anderen. Wer das erste Profil anlegt, wird Admin und verteilt den Einladungscode."),
+      field("Name", name), h("div", { class: "field" }, h("label", {}, "Art"), kind.el)),
+    buttons: [{ label: "Abbrechen" }, { label: "Gründen", class: "primary", onClick: async () => {
+      if (name.value.trim().length < 3) { toast("Der Name braucht mindestens 3 Zeichen", "error"); return false; }
+      const r = await api.post("/api/realms", { name: name.value.trim(), kind: kind.value() });
+      setRealm(r.slug);
+      toast(`Realm „${r.name}“ gegründet – leg jetzt dein Profil an`, "success", 5000);
+      await renderLogin();
+      registerDialog();
+    } }],
+  });
+  chainEnter([name]);
+  setTimeout(() => name.focus(), 50);
+}
+
+/** Admin: Realm umbenennen oder zwischen LAN-Party und Online umschalten. */
+function realmSettingsDialog() {
+  const name = input({ value: store.realm?.name || "", maxlength: 60 });
+  const kind = kindPicker(store.realm?.kind || "lan");
+  const link = `${location.origin}/?realm=${encodeURIComponent(currentRealm())}`;
+  modal({
+    title: "Realm-Einstellungen",
+    body: h("div", {},
+      field("Name", name), h("div", { class: "field" }, h("label", {}, "Art"), kind.el),
+      h("p", { class: "small muted" }, "Beim Umschalten auf „Online“ werden LAN-Daten nur ausgeblendet, nicht gelöscht."),
+      h("div", { class: "field" }, h("label", {}, "Direktlink zum Realm"),
+        h("div", { class: "row" }, h("code", { class: "grow small", style: { wordBreak: "break-all" } }, link),
+          h("button", { class: "btn sm", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(link)) ? "Link kopiert" : "Kopieren nicht möglich", "success"); } }, "Kopieren")))),
+    buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
+      store.realm = await api.put("/api/realm", { name: name.value.trim(), kind: kind.value() });
+      store.appName = store.realm.name;
+      toast("Realm gespeichert", "success");
+      renderRoute();
+    } }],
+  });
+}
+
+/** Realm wechseln: Anmeldung je Realm bleibt gespeichert, also ist der Rückweg ohne Passwort möglich. */
+function switchRealm() {
+  setRealm("");
+  location.href = location.pathname; // frisch laden: Live-Verbindung und Daten gehören zum Realm
+}
+
 /** Login-Bildschirm: Profil wählen und Passwort eingeben oder neues Profil anlegen. */
 export async function renderLogin(message) {
+  if (!currentRealm()) { renderRealmPicker(message); return; }
   let members = [];
   try {
     members = await api.get("/api/auth/members", { silent: true });
   } catch (e) {
+    if (e.status === 404) { setRealm(""); renderRealmPicker("Diesen Realm gibt es nicht (mehr)."); return; }
     mount(root, offlineGate());
     return;
   }
+  let realmName = "";
+  try { const host = await api.get("/api/host", { silent: true }); realmName = host.realm?.name || ""; store.mode = host.mode === "cloud" ? "cloud" : "lan"; } catch { /* egal */ }
   const list = h("div", { class: "pick-list" }, members.length
     ? members.map(m => h("div", { class: "it", onClick: () => loginDialog(m) },
         avatar(m, "sm"), h("div", { class: "grow" }, h("div", {}, m.name), !m.hasPassword ? h("div", { class: "small muted" }, "noch kein Passwort – beim ersten Login festlegen") : null),
@@ -260,6 +352,9 @@ export async function renderLogin(message) {
   mount(root, h("div", { class: "gate" }, h("div", { class: "card" },
     h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
     message ? h("p", { class: "small", style: { color: "#ff9a9a" } }, message) : null,
+    h("div", { class: "row between", style: { marginBottom: "8px" } },
+      h("div", {}, h("div", { class: "small muted" }, "Realm"), h("strong", {}, realmName || currentRealm())),
+      h("button", { class: "btn sm ghost", onClick: () => { setRealm(""); renderRealmPicker(); } }, "Wechseln")),
     h("p", { class: "muted small" }, "Wer bist du? Melde dich mit deinem Profil an."),
     list,
     h("hr", { class: "sep" }),
@@ -271,7 +366,7 @@ export async function renderLogin(message) {
 function offlineGate() {
   return h("div", { class: "gate" }, h("div", { class: "card" },
     h("div", { class: "hero" }, h("img", { src: "/logo.png", alt: "" }), h("div", { class: "title" }, "BINARY BROTHERHOOD")),
-    h("p", { class: "muted" }, "Das Host-Handy antwortet nicht. Bist du im selben WLAN?"),
+    h("p", { class: "muted" }, "Der Server antwortet nicht. Bist du online?"),
     h("button", { class: "btn primary block", onClick: () => location.reload() }, "Erneut versuchen")));
 }
 
@@ -334,13 +429,15 @@ function profileMenu() {
       h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
       (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); soundsDialog(); } }, h("span", {}, "🔊"), h("span", { class: "grow" }, "Glücksrad-Sounds")) : null,
-      (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); resetDialog(); } }, h("span", {}, "🧹"), h("span", { class: "grow" }, "LAN zurücksetzen")) : null,
+      store.isAdmin ? h("div", { class: "it", onClick: () => { ctx.close(); realmSettingsDialog(); } }, h("span", {}, "⚙️"), h("span", { class: "grow" }, "Realm-Einstellungen")) : null,
+      (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); resetDialog(); } }, h("span", {}, "🧹"), h("span", { class: "grow" }, store.lan ? "LAN zurücksetzen" : "Daten zurücksetzen")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); discordSettingsDialog(); } }, h("span", {}, "💬"), h("span", { class: "grow" }, "Discord-Server")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); showChangelog(false); } }, h("span", {}, "📜"), h("span", { class: "grow" }, "Änderungsprotokoll")) : null,
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
       inAndroidApp ? null : h("a", { class: "it", href: APK_URL, rel: "noopener", style: { textDecoration: "none", color: "inherit" } }, h("span", {}, "📱"), h("span", { class: "grow" }, "Android-App herunterladen")),
+      h("div", { class: "it", onClick: () => { ctx.close(); switchRealm(); } }, h("span", {}, "🌐"), h("span", { class: "grow" }, "Realm wechseln"), h("span", { class: "small muted" }, store.realm?.name || "")),
       h("div", { class: "it", onClick: async () => { ctx.close(); await store.logout(); renderLogin(); } }, h("span", {}, "🚪"), h("span", { class: "grow" }, "Abmelden")),
     ),
     buttons: [{ label: "Schließen" }],
@@ -375,11 +472,12 @@ function resetDialog() {
     ["xp", false, "XP und Level aller Mitglieder", "Komplettes XP-Protokoll löschen, alle fangen bei Level 1 an"],
     ["posts", false, "Vorschläge und Forum", "Alle Vorschläge, Beiträge und Kommentare löschen"],
   ];
-  const boxes = opts.map(([key, def, label, hint]) => ({ key, box: h("input", { type: "checkbox", checked: def }), label, hint }));
+  const shown = store.lan ? opts : opts.filter(([key]) => key !== "costs" && key !== "equipment");
+  const boxes = shown.map(([key, def, label, hint]) => ({ key, box: h("input", { type: "checkbox", checked: def }), label, hint }));
   modal({
-    title: "LAN zurücksetzen",
+    title: store.lan ? "LAN zurücksetzen" : "Daten zurücksetzen",
     body: h("div", {},
-      h("p", { class: "small" }, "Spiele und Mitglieder bleiben immer erhalten. Betrifft die aktuelle Ausgabe „", store.event?.name ?? "", "“."),
+      h("p", { class: "small" }, "Spiele und Mitglieder bleiben immer erhalten.", store.lan ? ` Betrifft die aktuelle Ausgabe „${store.event?.name ?? ""}“.` : ""),
       h("div", { class: "pick-list" }, boxes.map(b => h("label", { class: "it" }, b.box, h("div", { class: "grow" }, h("div", {}, b.label), h("div", { class: "small muted" }, b.hint))))),
       h("p", { class: "small", style: { color: "#ff9a9a", marginTop: "10px" } }, "Das lässt sich nicht rückgängig machen.")),
     buttons: [{ label: "Abbrechen" }, { label: "Zurücksetzen", class: "danger", onClick: async () => {
@@ -434,7 +532,8 @@ async function inviteDialog() {
   modal({
     title: "Einladungscode",
     body: h("div", { style: { textAlign: "center" } },
-      h("p", { class: "muted small" }, "Wer ein Profil anlegen will, braucht diesen Code. Schick ihn den Kumpels per Chat."),
+      h("p", { class: "muted small" }, "Wer ein Profil anlegen will, braucht diesen Code. Schick ihn zusammen mit dem Link zum Realm per Chat:"),
+      h("code", { class: "small", style: { wordBreak: "break-all" } }, `${location.origin}/?realm=${encodeURIComponent(currentRealm())}`),
       h("div", { style: { margin: "14px 0" } }, codeEl),
       h("div", { class: "row wrap", style: { justifyContent: "center" } },
         h("button", { class: "btn", onClick: async () => { const { copyText } = await import("./ui.js"); toast((await copyText(codeEl.textContent)) ? "Code kopiert" : "Kopieren nicht möglich", "success"); } }, "Kopieren"),
@@ -483,6 +582,9 @@ export async function requireMe() {
 }
 
 async function init() {
+  const linkRealm = new URLSearchParams(location.search).get("realm");
+  if (linkRealm) { setRealm(linkRealm.toLowerCase()); history.replaceState(null, "", location.pathname + location.hash); }
+  if (!currentRealm()) { renderRealmPicker(); return; }
   let loggedIn;
   try {
     await store.loadMode();
@@ -511,7 +613,9 @@ window.addEventListener("bb:unauthorized", () => {
   renderLogin("Deine Sitzung ist abgelaufen, bitte melde dich neu an.");
 });
 
+window.addEventListener("bb:realm-missing", () => { setRealm(""); store.me = null; renderRealmPicker("Diesen Realm gibt es nicht (mehr)."); });
 window.addEventListener("hashchange", renderRoute);
+on("realm", () => renderRoute()); // Admin hat Name oder Art geändert
 const refreshOnline = () => { const c = document.getElementById("online-chip"); if (c) c.replaceWith(onlineChip()); };
 on("connection", refreshOnline);
 on("presence", refreshOnline);

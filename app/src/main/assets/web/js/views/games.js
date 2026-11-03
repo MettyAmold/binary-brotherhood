@@ -167,9 +167,10 @@ export function editGame(g) {
  */
 async function participantPicker(preselected) {
   let attendance = {};
-  try { attendance = (await api.get("/api/costs", { silent: true })).attendance || {}; } catch { /* dann alle */ }
+  if (store.lan) try { attendance = (await api.get("/api/costs", { silent: true })).attendance || {}; } catch { /* dann alle */ }
   const day = store.currentDay();
-  const present = day ? store.members.filter(m => (attendance[m.id] || []).includes(day)) : [];
+  // Online-Realm: statt „heute anwesend“ zählt „gerade online“
+  const present = !store.lan ? store.members.filter(m => store.isOnline(m.id)) : day ? store.members.filter(m => (attendance[m.id] || []).includes(day)) : [];
   const pre = preselected ? new Set(preselected) : null;
   let showAll = !present.length;
   const checks = store.members.map(m => ({ m, present: present.includes(m), box: h("input", { type: "checkbox", checked: pre ? pre.has(m.id) : present.includes(m) || !present.length }) }));
@@ -178,8 +179,10 @@ async function participantPicker(preselected) {
   const toggle = h("button", { class: "btn sm ghost", onClick: () => { showAll = !showAll; draw(); } });
   const draw = () => {
     const visible = checks.filter(c => showAll || c.present || (pre && pre.has(c.m.id)));
-    mount(list, visible.map(({ m, box, present: isP }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name), isP ? h("span", { class: "chip green" }, "heute da") : null)));
-    hint.textContent = !day ? "Heute ist kein LAN-Tag – alle Mitglieder werden angezeigt."
+    mount(list, visible.map(({ m, box, present: isP }) => h("label", { class: "it" }, box, avatar(m, "sm"), h("span", { class: "grow" }, m.name), isP ? h("span", { class: "chip green" }, store.lan ? "heute da" : "online") : null)));
+    hint.textContent = !store.lan ? (!present.length ? "Gerade ist niemand online – alle Mitglieder werden angezeigt."
+        : showAll ? `Alle Mitglieder; ${present.length} sind gerade online.` : `Nur die ${present.length} Mitglieder, die gerade online sind.`)
+      : !day ? "Heute ist kein LAN-Tag – alle Mitglieder werden angezeigt."
       : !present.length ? `Für Tag ${day} ist noch niemand als anwesend eingetragen (Kosten → Anwesenheit) – alle werden angezeigt.`
       : showAll ? `Alle Mitglieder; ${present.length} sind für Tag ${day} als anwesend eingetragen.` : `Nur die ${present.length} für Tag ${day} eingetragenen Mitglieder.`;
     toggle.textContent = showAll ? "Nur Anwesende" : "Alle Mitglieder zeigen";

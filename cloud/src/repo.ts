@@ -28,7 +28,9 @@ interface ShareRow { id: number; path: string; addedById: number | null; lastSca
 const MEMBER_COLS = "id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt";
 
 export class Repo {
-  constructor(private db: Db) {}
+  /** realm: steckt in Bild-/Medien-/Klang-URLs, damit der Browser-Cache Realms nicht vermischt. */
+  constructor(private db: Db, private realm = "") {}
+  private rq = () => (this.realm ? `realm=${encodeURIComponent(this.realm)}&` : "");
 
   // ================================================================ Events
   async ensureCurrentEvent(): Promise<EventRow> {
@@ -98,7 +100,7 @@ export class Repo {
       const fav = [...groupBy(mySessions, s => s.gameId).entries()].sort((a, b) => b[1].length - a[1].length)[0];
       return {
         id: m.id, name: m.name, motto: m.motto, color: m.color, hasAvatar: bool(m.hasAvatar),
-        avatarUrl: `/api/members/${m.id}/avatar?v=${m.avatarUpdatedAt ?? m.createdAt}`,
+        avatarUrl: `/api/members/${m.id}/avatar?${this.rq()}v=${m.avatarUpdatedAt ?? m.createdAt}`,
         xp: total, level: lvl.level, rank: lvl.rank, xpForCurrentLevel: lvl.xpForCurrentLevel, xpForNextLevel: lvl.xpForNextLevel, progress: lvl.progress,
         stats: {
           gamesPlayed: mySessions.length, forumPosts: count(posts, "authorId", m.id), comments: count(fComments, "authorId", m.id) + count(sComments, "authorId", m.id),
@@ -393,7 +395,7 @@ export class Repo {
   }
 
   // ================================================================ Forum
-  private mediaDto = (m: MediaRow) => ({ id: m.id, url: `/api/media/${m.id}`, contentType: m.contentType, name: m.name, size: m.size });
+  private mediaDto = (m: MediaRow) => ({ id: m.id, url: `/api/media/${m.id}?${this.rq()}`, contentType: m.contentType, name: m.name, size: m.size });
   async forum() {
     const [members, comments, posts, media] = await Promise.all([
       this.db.all<MemberRow>("SELECT id, name, color, hasAvatar FROM members"),
@@ -419,7 +421,7 @@ export class Repo {
     // Verwaiste Uploads (nie an etwas gehängt) nach einem Tag aufräumen
     await this.db.run("DELETE FROM media WHERE postId IS NULL AND commentId IS NULL AND createdAt < ?", now() - 86_400_000);
     const id = await this.db.insert("INSERT INTO media (contentType, data, size, name, uploadedBy, createdAt) VALUES (?, ?, ?, ?, ?, ?)", contentType, data, data.byteLength, name.slice(0, 120), uploadedBy, now());
-    return { id, url: `/api/media/${id}`, contentType, name, size: data.byteLength };
+    return { id, url: `/api/media/${id}?${this.rq()}`, contentType, name, size: data.byteLength };
   }
   async media(id: number) {
     const r = await this.db.first<{ data: ArrayBuffer | number[]; contentType: string }>("SELECT data, contentType FROM media WHERE id = ?", id);
@@ -679,7 +681,7 @@ export class Repo {
   // ================================================================ Klänge (Admin lädt eigene Audiodateien hoch)
   async sounds() {
     const rows = await this.db.all<{ kind: string; name: string; contentType: string; updatedAt: number }>("SELECT kind, name, contentType, updatedAt FROM sounds");
-    return Object.fromEntries(rows.map(r => [r.kind, { name: r.name, contentType: r.contentType, updatedAt: r.updatedAt, url: `/api/sounds/${r.kind}?v=${r.updatedAt}` }]));
+    return Object.fromEntries(rows.map(r => [r.kind, { name: r.name, contentType: r.contentType, updatedAt: r.updatedAt, url: `/api/sounds/${r.kind}?${this.rq()}v=${r.updatedAt}` }]));
   }
   async sound(kind: string) {
     const r = await this.db.first<{ data: ArrayBuffer | number[]; contentType: string }>("SELECT data, contentType FROM sounds WHERE kind = ?", kind);

@@ -1,20 +1,59 @@
-// Kleiner Fetch-Wrapper für die REST-API des Host-Handys. Schickt das Login-Token mit.
+// Kleiner Fetch-Wrapper für die REST-API. Schickt Realm und Login-Token mit.
 import { toast } from "./ui.js";
 
 export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
+// ---------- Realm: jede Gruppe hat ihre eigene Datenbank, gewählt beim Login ----------
+const LEGACY_REALM = "binary-brotherhood";
+let realm = (() => {
+  const fromUrl = new URLSearchParams(location.search).get("realm");
+  if (fromUrl) return fromUrl.toLowerCase();
+  try {
+    // Wer schon vor den Realms angemeldet war, landet ohne Nachfrage im ersten Realm
+    return localStorage.getItem("bb.realm") || (localStorage.getItem("bb.token") ? LEGACY_REALM : "");
+  } catch { return ""; }
+})();
+
+/** Slug des gewählten Realms ("" = noch keiner gewählt). */
+export function currentRealm() { return realm; }
+export function setRealm(slug) {
+  realm = slug || "";
+  try { realm ? localStorage.setItem("bb.realm", realm) : localStorage.removeItem("bb.realm"); } catch { /* privat */ }
+  syncRealmCookie();
+}
+/** Bilder, Audio und Medien laden ohne eigene Header – dafür zeigt ein Cookie dem Server den Realm. */
+function syncRealmCookie() {
+  document.cookie = realm ? `bb_realm=${encodeURIComponent(realm)}; path=/; max-age=31536000; SameSite=Lax` : "bb_realm=; path=/; max-age=0";
+}
+syncRealmCookie();
+// Mehrere Tabs mit verschiedenen Realms: beim Zurückkehren den eigenen wieder setzen
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncRealmCookie(); });
+
+/** Login-Token je Realm; das alte, realm-lose Token gehört zum ersten Realm. */
+const tokenKey = () => `bb.token.${realm}`;
 export function getToken() {
-  try { return localStorage.getItem("bb.token") || ""; } catch { return ""; }
+  if (!realm) return "";
+  try {
+    const t = localStorage.getItem(tokenKey());
+    if (t) return t;
+    if (realm === LEGACY_REALM) return localStorage.getItem("bb.token") || "";
+  } catch { /* privat */ }
+  return "";
 }
 export function setToken(t) {
-  try { t ? localStorage.setItem("bb.token", t) : localStorage.removeItem("bb.token"); } catch { /* privater Modus */ }
+  if (!realm) return;
+  try {
+    t ? localStorage.setItem(tokenKey(), t) : localStorage.removeItem(tokenKey());
+    if (realm === LEGACY_REALM) localStorage.removeItem("bb.token");
+  } catch { /* privater Modus */ }
 }
 
 export function authHeaders() {
   const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  const hd = realm ? { "X-Realm": realm } : {};
+  return t ? { ...hd, Authorization: `Bearer ${t}` } : hd;
 }
 
 async function request(method, url, body, opts = {}) {
@@ -28,7 +67,7 @@ async function request(method, url, body, opts = {}) {
   try {
     res = await fetch(url, { method, headers, body: payload });
   } catch (e) {
-    throw new ApiError("Keine Verbindung zum Host-Handy", 0);
+    throw new ApiError("Keine Verbindung zum Server", 0);
   }
   if (res.status === 204) return null;
   const text = await res.text();
@@ -36,7 +75,9 @@ async function request(method, url, body, opts = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
     const msg = (data && data.error) || `Fehler ${res.status}`;
-    if (res.status === 401 && !opts.noAuthRedirect) {
+    if (res.status === 404 && data && data.realmMissing) {
+      window.dispatchEvent(new CustomEvent("bb:realm-missing"));
+    } else if (res.status === 401 && !opts.noAuthRedirect) {
       // Token ungültig oder abgelaufen → zurück zum Login
       window.dispatchEvent(new CustomEvent("bb:unauthorized"));
     } else if (!opts.silent) {

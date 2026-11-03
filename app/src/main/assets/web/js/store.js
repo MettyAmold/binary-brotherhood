@@ -1,5 +1,5 @@
 // Globaler Zustand: aktuelles Mitglied, Mitgliederliste, LAN-Ausgabe, Live-Verbindung.
-import { api, getToken, setToken } from "./api.js";
+import { api, getToken, setToken, currentRealm } from "./api.js";
 import { setSoundUrls } from "./notify.js";
 import { setAvatarUrls } from "./ui.js";
 
@@ -18,12 +18,17 @@ export const store = {
   /** Mitglieder mit offener Live-Verbindung: [{ id, name }] */
   online: [],
   appName: "BINARY BROTHERHOOD",
+  /** Gewählter Realm: { slug, name, kind: "lan" | "online" } */
+  realm: null,
+  /** LAN-Funktionen (LAN-Party, Anwesenheit, Kosten, Ausrüstung, Freigaben) nur in LAN-Realms */
+  get lan() { return !this.realm || this.realm.kind !== "online"; },
   isOnline(id) { return this.online.some(o => o.id === Number(id)); },
 
   member(id) { return this.members.find(m => m.id === Number(id)) || null; },
 
   /** Heutiger LAN-Tag (1-basiert) der aktuellen Ausgabe oder null, wenn heute kein LAN-Tag ist. */
   currentDay() {
+    if (!this.lan) return null;
     const ev = this.event;
     if (!ev || !ev.startDate) return null;
     const start = new Date(ev.startDate + "T00:00:00");
@@ -74,6 +79,7 @@ export const store = {
     this.event = b.event;
     this.events = b.events;
     this.appName = b.appName;
+    if (b.realm) this.realm = b.realm;
     if (this.me) this.me = this.member(this.me.id) || this.me;
     emit("members"); emit("events");
   },
@@ -87,6 +93,7 @@ export const store = {
   async refreshEvents() {
     const b = await api.get("/api/bootstrap");
     this.events = b.events; this.event = b.event;
+    if (b.realm) { this.realm = b.realm; this.appName = b.realm.name; }
     emit("events");
   },
 };
@@ -115,7 +122,7 @@ function startPolling() {
       pollSince = r.now;
       for (const ch of r.changes) {
         if (ch.topic === "members") store.refreshMembers().catch(() => {});
-        else if (ch.topic === "events") store.refreshEvents().catch(() => {});
+        else if (ch.topic === "events" || ch.topic === "realm") store.refreshEvents().catch(() => {});
         else if (ch.topic === "sounds") store.refreshSounds();
         emit(ch.topic);
       }
@@ -126,7 +133,7 @@ function startPolling() {
 export function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const tok = getToken();
-  try { ws = new WebSocket(`${proto}://${location.host}/ws${tok ? `?token=${encodeURIComponent(tok)}` : ""}`); } catch { scheduleReconnect(); return; }
+  try { ws = new WebSocket(`${proto}://${location.host}/ws?realm=${encodeURIComponent(currentRealm())}${tok ? `&token=${encodeURIComponent(tok)}` : ""}`); } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     const wasOffline = !store.connected;
     store.connected = true; retry = 1000; failures = 0; emit("connection", true);
@@ -142,6 +149,7 @@ export function connect() {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === "presence") { store.online = msg.members || []; emit("presence", store.online); return; }
     if (msg.type === "change") {
+      if (msg.topic === "realm" && msg.payload) { store.realm = msg.payload; store.appName = msg.payload.name; }
       if (msg.topic === "members") store.refreshMembers().catch(() => {});
       else if (msg.topic === "events") store.refreshEvents().catch(() => {});
       else if (msg.topic === "sounds") store.refreshSounds();

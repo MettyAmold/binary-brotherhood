@@ -1,6 +1,6 @@
 // Windows-Freigaben mit Spielordnern: Verwaltung und Einrichtungs-Assistent für Laien.
 import { h, mount, modal, confirmDialog, toast, field, input, timeAgo, copyText } from "../ui.js";
-import { api } from "../api.js";
+import { api, currentRealm } from "../api.js";
 import { store } from "../store.js";
 
 const scanInfo = (r) => `${r.folders} Ordner, ${r.added} neue Spiele` + (r.error ? ` – Fehler: ${r.error}` : "");
@@ -142,7 +142,7 @@ export function buildUploadScript({ folder, base, shareId, uploadKey, setupShare
     `# Ordnerliste hochladen`,
     `$folders = @(Get-ChildItem -LiteralPath $path -Directory | Select-Object -ExpandProperty Name)`,
     `$body = [System.Text.Encoding]::UTF8.GetBytes((@{ folders = $folders } | ConvertTo-Json -Compress))`,
-    `$r = Invoke-RestMethod -Method Post -Uri ${q(base + "/api/shares/" + shareId + "/folders")} -Headers @{ 'X-Share-Key' = ${q(uploadKey)} } -ContentType 'application/json; charset=utf-8' -Body $body`,
+    `$r = Invoke-RestMethod -Method Post -Uri ${q(base + "/api/shares/" + shareId + "/folders?realm=" + encodeURIComponent(currentRealm()))} -Headers @{ 'X-Share-Key' = ${q(uploadKey)} } -ContentType 'application/json; charset=utf-8' -Body $body`,
     `Write-Host ''; Write-Host ("Fertig! " + $r.folders + " Ordner gemeldet, " + $r.added + " neue Spiele.") -ForegroundColor Green`,
   );
   return "& {\r\n" + lines.map(l => "  " + l).join("\r\n") + "\r\n}\r\n";
@@ -150,7 +150,7 @@ export function buildUploadScript({ folder, base, shareId, uploadKey, setupShare
 
 /** Eine Zeile für PowerShell: holt das Skript vom Server und führt es als Ganzes aus. */
 export function oneLiner({ base, shareId, uploadKey, folder, shareName, setupShare, user, pass }) {
-  const p = new URLSearchParams({ key: uploadKey, folder, share: shareName });
+  const p = new URLSearchParams({ key: uploadKey, folder, share: shareName, realm: currentRealm() });
   if (setupShare) { p.set("setup", "1"); p.set("user", user); p.set("pass", pass); }
   return `irm '${base}/api/shares/${shareId}/setup.ps1?${p.toString()}' | iex`;
 }

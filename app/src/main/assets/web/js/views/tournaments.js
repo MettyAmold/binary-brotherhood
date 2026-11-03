@@ -139,9 +139,9 @@ function reportDialog(t, m, a, b) {
 async function editTournament(t) {
   const games = await api.get("/api/games").catch(() => []);
   let attendance = {};
-  try { attendance = (await api.get("/api/costs", { silent: true })).attendance || {}; } catch { /* egal */ }
+  if (store.lan) try { attendance = (await api.get("/api/costs", { silent: true })).attendance || {}; } catch { /* egal */ }
   const day = store.currentDay();
-  const present = new Set(day ? store.members.filter(m => (attendance[m.id] || []).includes(day)).map(m => m.id) : []);
+  const present = new Set(!store.lan ? store.members.filter(m => store.isOnline(m.id)).map(m => m.id) : day ? store.members.filter(m => (attendance[m.id] || []).includes(day)).map(m => m.id) : []);
 
   const name = input({ value: t ? t.name : "", placeholder: "z. B. CS2 Nacht-Cup", maxlength: 80 });
   const game = h("select", { class: "select" }, h("option", { value: "" }, "– ohne Spiel –"), games.map(g => h("option", { value: g.id, selected: t && t.gameId === g.id }, g.name)));
@@ -174,10 +174,10 @@ async function editTournament(t) {
       h("button", { type: "button", class: !solo ? "active" : "", onClick: () => { solo = false; if (teamNames.length < 2) teamNames = ["Team 1", "Team 2"]; [...assign.keys()].forEach(k => { if (assign.get(k) > teamNames.length) assign.set(k, 0); }); drawTeams(); } }, "👥 Teams"));
     if (solo) {
       mount(teamsBox,
-        h("div", { class: "small muted", style: { marginBottom: "6px" } }, present.size ? `Vorausgewählt: die ${present.size} heute Anwesenden.` : "Wer spielt mit?"),
+        h("div", { class: "small muted", style: { marginBottom: "6px" } }, present.size ? `Vorausgewählt: die ${present.size} ${store.lan ? "heute Anwesenden" : "gerade Online"}.` : "Wer spielt mit?"),
         h("div", { class: "pick-list" }, store.members.map(m => h("label", { class: "it" },
           h("input", { type: "checkbox", checked: assign.get(m.id) > 0, onChange: (e) => { if (e.target.checked) assign.set(m.id, 1); else assign.delete(m.id); } }),
-          avatar(m, "xs"), h("span", { class: "grow" }, m.name), present.has(m.id) ? h("span", { class: "chip green" }, "heute da") : null))));
+          avatar(m, "xs"), h("span", { class: "grow" }, m.name), present.has(m.id) ? h("span", { class: "chip green" }, store.lan ? "heute da" : "online") : null))));
       return;
     }
     const counts = teamNames.map((_, i) => [...assign.values()].filter(v => v === i + 1).length);
@@ -192,7 +192,7 @@ async function editTournament(t) {
           teamNames = Array.from({ length: n }, (_, i) => teamNames[i] || `Team ${i + 1}`);
           assign.clear(); pool.forEach((id, i) => assign.set(id, (i % n) + 1));
           drawTeams(); toast(`${n} Teams ausgelost`, "success");
-        } }, present.size ? "🎲 Anwesende auslosen" : "🎲 Alle auslosen"),
+        } }, present.size ? (store.lan ? "🎲 Anwesende auslosen" : "🎲 Online-Leute auslosen") : "🎲 Alle auslosen"),
         h("button", { type: "button", class: "btn sm", onClick: () => { teamNames.push(`Team ${teamNames.length + 1}`); drawTeams(); } }, "+ Team")),
       h("div", { class: "team-names" }, teamNames.map((n, i) => h("div", { class: "row" },
         h("input", { class: "input", value: n, maxlength: 40, onInput: (e) => { teamNames[i] = e.target.value; } }),
@@ -201,7 +201,7 @@ async function editTournament(t) {
           teamNames.splice(i, 1); for (const [k, v] of assign) { if (v === i + 1) assign.set(k, 0); else if (v > i + 1) assign.set(k, v - 1); } drawTeams();
         } }, "✕") : null))),
       h("div", { class: "pick-list", style: { marginTop: "8px" } }, store.members.map(m => h("div", { class: "it" }, avatar(m, "xs"), h("span", { class: "grow" }, m.name),
-        present.has(m.id) ? h("span", { class: "chip green" }, "da") : null,
+        present.has(m.id) ? h("span", { class: "chip green" }, store.lan ? "da" : "online") : null,
         h("select", { class: "select", style: { width: "auto" }, onChange: (e) => { assign.set(m.id, Number(e.target.value)); drawTeams(); } },
           h("option", { value: 0, selected: !assign.get(m.id) }, "– nicht dabei –"),
           teamNames.map((n, i) => h("option", { value: i + 1, selected: assign.get(m.id) === i + 1 }, n)))))));
