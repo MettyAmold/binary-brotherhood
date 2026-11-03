@@ -1,5 +1,5 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
-import { h, mount, avatar, modal, toast, field, input } from "./ui.js";
+import { h, mount, avatar, modal, toast, field, input, checkbox } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api } from "./api.js";
 import { renderGames } from "./views/games.js";
@@ -74,6 +74,21 @@ async function renderRoute() {
 
 const passwordInput = (attrs = {}) => input({ type: "password", autocomplete: "current-password", ...attrs });
 
+/** Enter springt zum nächsten Feld, im letzten Feld wird der Primär-Knopf des Dialogs ausgelöst. */
+function chainEnter(inputs) {
+  inputs.forEach((inp, i) => inp.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (i < inputs.length - 1) inputs[i + 1].focus();
+    else inp.closest(".modal")?.querySelector(".modal-foot .btn.primary")?.click();
+  }));
+}
+
+/** „Passwort anzeigen“ für alle übergebenen Felder, damit Tippfehler am Handy auffallen. */
+function showPasswordToggle(...inputs) {
+  return checkbox("Passwort anzeigen", { onChange: (e) => inputs.forEach(i => { i.type = e.target.checked ? "text" : "password"; }) });
+}
+
 /** Login-Bildschirm: Profil wählen und Passwort eingeben oder neues Profil anlegen. */
 export async function renderLogin(message) {
   let members = [];
@@ -116,16 +131,16 @@ function loginDialog(m) {
     toast(`Willkommen zurück, ${r.member.name}!`, "success");
     init();
   };
-  const ctx = modal({
+  modal({
     title: `Anmelden als ${m.name}`,
     body: h("div", {},
       !m.hasPassword ? h("p", { class: "muted small" }, "Dieses Profil hat noch kein Passwort. Lege jetzt eines fest – es gilt ab sofort für alle Geräte.") : null,
       field(m.hasPassword ? "Passwort" : "Neues Passwort", pw),
-      !m.hasPassword ? field("Wiederholen", pw2) : null),
-    buttons: [{ label: "Abbrechen" }, { label: "Anmelden", class: "primary", onClick: submit }],
+      !m.hasPassword ? field("Wiederholen", pw2) : null,
+      showPasswordToggle(pw, pw2)),
+    buttons: [{ label: "Abbrechen" }, { label: m.hasPassword ? "Anmelden" : "Festlegen und anmelden", class: "primary", onClick: submit }],
   });
-  const onEnter = (e) => { if (e.key === "Enter") { e.preventDefault(); ctx.body.closest(".modal").querySelector(".modal-foot .btn.primary").click(); } };
-  pw.addEventListener("keydown", onEnter); pw2.addEventListener("keydown", onEnter);
+  chainEnter(m.hasPassword ? [pw] : [pw, pw2]);
   setTimeout(() => pw.focus(), 50);
 }
 
@@ -137,7 +152,7 @@ function registerDialog() {
     title: "Neues Profil",
     body: h("div", {},
       h("p", { class: "muted small" }, "Das Passwort schützt dein Profil, damit niemand in deinem Namen abstimmt oder schreibt."),
-      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2)),
+      field("Name", name), field("Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(pw, pw2)),
     buttons: [{ label: "Abbrechen" }, { label: "Anlegen", class: "primary", onClick: async () => {
       if (!name.value.trim()) { toast("Name fehlt", "error"); return false; }
       if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
@@ -148,6 +163,7 @@ function registerDialog() {
       init();
     } }],
   });
+  chainEnter([name, pw, pw2]);
 }
 
 /** Menü hinter dem Profil-Chip oben rechts. */
@@ -171,7 +187,7 @@ export function changePasswordDialog() {
   const pw2 = passwordInput({ placeholder: "Passwort wiederholen", autocomplete: "new-password" });
   modal({
     title: "Passwort ändern",
-    body: h("div", {}, field("Aktuelles Passwort", old), field("Neues Passwort", pw), field("Wiederholen", pw2),
+    body: h("div", {}, field("Aktuelles Passwort", old), field("Neues Passwort", pw), field("Wiederholen", pw2), showPasswordToggle(old, pw, pw2),
       h("p", { class: "muted small" }, "Andere Geräte werden abgemeldet.")),
     buttons: [{ label: "Abbrechen" }, { label: "Speichern", class: "primary", onClick: async () => {
       if (pw.value.length < 4) { toast("Passwort muss mindestens 4 Zeichen haben", "error"); return false; }
@@ -181,6 +197,7 @@ export function changePasswordDialog() {
       toast("Passwort geändert", "success");
     } }],
   });
+  chainEnter([old, pw, pw2]);
 }
 
 /** Für schreibende Aktionen: liefert das angemeldete Mitglied (ohne Login gibt es die App nicht). */
