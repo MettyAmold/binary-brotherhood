@@ -48,6 +48,16 @@ interface GameDao {
     @Query("DELETE FROM games WHERE id = :id") suspend fun delete(id: Long)
     @Query("UPDATE games SET selectedForNext = :selected WHERE id = :id") suspend fun setSelected(id: Long, selected: Boolean)
     @Query("UPDATE games SET selectedForNext = 0") suspend fun clearSelection()
+    @Query("UPDATE games SET sharePath = '', shareId = NULL WHERE shareId = :shareId") suspend fun clearShare(shareId: Long)
+}
+
+@Dao
+interface ShareDao {
+    @Query("SELECT * FROM shares ORDER BY path COLLATE NOCASE") suspend fun all(): List<ShareEntity>
+    @Query("SELECT * FROM shares WHERE id = :id") suspend fun byId(id: Long): ShareEntity?
+    @Insert suspend fun insert(s: ShareEntity): Long
+    @Update suspend fun update(s: ShareEntity)
+    @Query("DELETE FROM shares WHERE id = :id") suspend fun delete(id: Long)
 }
 
 @Dao

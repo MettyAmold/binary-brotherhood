@@ -56,6 +56,30 @@ data class GameEntity(
     val addedById: Long? = null,
     val selectedForNext: Boolean = false,
     val createdAt: Long,
+    /** UNC-Pfad des Spielordners auf einer Freigabe, z. B. \\PC\Spiele\Portal 2 (leer = manuell angelegt) */
+    @ColumnInfo(defaultValue = "") val sharePath: String = "",
+    val shareId: Long? = null,
+)
+
+/**
+ * Eine Windows-Freigabe im LAN, die die App als Client durchsucht. Jeder Unterordner
+ * wird zu einem Spiel; die Dateien holen sich die Leute direkt vom jeweiligen PC.
+ */
+@Entity(tableName = "shares")
+data class ShareEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Normalisiert als \\host\freigabe\unterordner */
+    val path: String,
+    val username: String = "",
+    val password: String = "",
+    val domain: String = "",
+    val addedById: Long? = null,
+    val lastScanAt: Long? = null,
+    val lastError: String = "",
+    val lastCount: Int = 0,
+    /** Bereits gesehene Ordnernamen (zeilenweise), damit gelöschte Spiele nicht wieder auftauchen */
+    val knownFolders: String = "",
+    val createdAt: Long,
 )
 
 /** Eine gespielte (oder gerade laufende) Runde eines Spiels. endedAt == null → läuft gerade. */

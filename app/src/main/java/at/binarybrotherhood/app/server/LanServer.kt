@@ -54,7 +54,10 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -91,6 +94,7 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val sessions = Collections.synchronizedSet(mutableSetOf<DefaultWebSocketServerSession>())
     private var engine: EmbeddedServer<*, *>? = null
+    private var scanJob: Job? = null
 
     private val _clientCount = MutableStateFlow(0)
     val clientCount: StateFlow<Int> = _clientCount
@@ -101,10 +105,20 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             runCatching { repo.ensureCurrentEvent(); repo.seedDefaultEquipmentIfEmpty() }.onFailure { Log.e(TAG, "seed", it) }
         }
         engine = embeddedServer(CIO, port = port, host = "0.0.0.0") { module() }.also { it.start(wait = false) }
+        // Freigaben kurz nach dem Start und danach alle 15 Minuten neu einlesen
+        scanJob = scope.launch {
+            delay(5_000)
+            while (isActive) {
+                runCatching { if (repo.scanAll().any { it.added > 0 }) { broadcast("games"); broadcast("shares") } }
+                    .onFailure { Log.w(TAG, "Freigaben-Scan", it) }
+                delay(15 * 60_000)
+            }
+        }
         Log.i(TAG, "Server gestartet auf Port $port")
     }
 
     fun stop() {
+        scanJob?.cancel(); scanJob = null
         engine?.stop(500, 1500)
         engine = null
         sessions.clear()
@@ -337,6 +351,15 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
             put("/{id}") { call.respond(repo.updateGame(call.id(), call.receive()).also { broadcast("games") }) }
             delete("/{id}") { repo.deleteGame(call.id()); broadcast("games"); call.respond(OkDto()) }
             post("/{id}/select") { repo.selectGame(call.id(), call.receive<SelectRequest>().selected); broadcast("games"); call.respond(OkDto()) }
+        }
+
+        // ---- Windows-Freigaben mit Spielordnern
+        route("/shares") {
+            get { call.respond(repo.shares()) }
+            post { call.respond(repo.createShare(call.receive(), call.actor()).also { broadcast("shares") }) }
+            delete("/{id}") { repo.deleteShare(call.id(), call.session().member.id, call.isHost()); broadcast("shares"); broadcast("games"); call.respond(OkDto()) }
+            post("/scan") { val r = repo.scanAll(); broadcast("games"); broadcast("shares"); call.respond(r) }
+            post("/{id}/scan") { val r = repo.scanShare(call.id()); broadcast("games"); broadcast("shares"); call.respond(r) }
         }
 
         // ---- Runden (aktuell gespielt + Historie)

@@ -69,6 +69,16 @@ Signatur: Der Workflow erwartet die Repository-Secrets `BBL_KEYSTORE_BASE64`, `B
 `BBL_KEY_ALIAS` und `BBL_KEY_PASSWORD`. Fehlen sie, wird mit dem Debug-Key signiert. Lokal signiert
 `./gradlew :app:assembleRelease`, wenn `BBL_KEYSTORE_PATH` und die Passwort-Variablen gesetzt sind.
 
+## Spiele-Freigaben im LAN
+
+Liegen die Spiele auf PCs im LAN, trägt man unter *Spiele → Freigaben* deren Windows-Freigaben ein, z. B.
+`\\192.168.0.10\Spiele` (IP ist zuverlässiger als der PC-Name), optional mit Benutzer und Passwort, sonst
+Gastzugriff. Die App durchsucht die Freigabe als SMB-Client: Jeder Unterordner wird zu einem Spiel. Dubletten werden
+über den Namen (ohne Groß/Kleinschreibung und Satzzeichen) und den Pfad erkannt, einmal gesehene und wieder
+gelöschte Ordner tauchen nicht erneut auf. Eingelesen wird beim Serverstart, alle 15 Minuten und per Knopf. Auf der
+Spielkarte steht der Pfad mit „Kopieren“, die Dateien holt sich jeder direkt vom PC im Explorer. Eine eigene
+Freigabe kann das Handy nicht anbieten (kein SMB-Server ohne Root).
+
 ## Login
 
 Jedes Profil hat ein Passwort. Beim ersten Besuch wählt man sein Profil und legt das Passwort fest (bestehende

@@ -212,6 +212,19 @@ export function resizeImage(file, max = 512, quality = 0.86) {
   });
 }
 
+/** Text in die Zwischenablage; Fallback für http-Seiten ohne Clipboard-API. */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* Fallback unten */ }
+  const ta = h("textarea", { value: text, style: { position: "fixed", opacity: "0", top: "0", left: "0" } });
+  document.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 export function confetti(n = 120) {
   const box = h("div", { class: "confetti" });
   const colors = ["#c9a24d", "#e8d9a8", "#f1e7cf", "#8f6f2a", "#4fa3d9", "#6bbf59", "#e05c8a"];

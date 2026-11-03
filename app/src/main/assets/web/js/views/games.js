@@ -1,5 +1,5 @@
 // Spieleverwaltung: Liste, aktuell gespielte Spiele, Historie, Auswahl für die nächste Runde.
-import { h, mount, modal, confirmDialog, avatar, empty, fmtDate, fmtTime, duration, toast, checkbox, textarea, field } from "../ui.js";
+import { h, mount, modal, confirmDialog, avatar, empty, fmtDate, fmtTime, duration, toast, checkbox, textarea, field, input, timeAgo, copyText } from "../ui.js";
 import { api } from "../api.js";
 import { store, on } from "../store.js";
 import { gameForm } from "../steam.js";
@@ -56,6 +56,9 @@ export async function renderGames(main, params) {
         g.lastPlayedAt ? h("span", {}, "zuletzt " + fmtDate(g.lastPlayedAt, { hour: undefined, minute: undefined })) : null,
       ),
       g.description ? h("div", { class: "clamp-3 small", style: { color: "var(--text-2)" } }, g.description) : null,
+      g.sharePath ? h("div", { class: "share-row", title: "Ordner auf einer Freigabe im LAN" },
+        h("span", {}, "💾"), h("code", { class: "share-path" }, g.sharePath),
+        h("button", { class: "btn sm ghost", onClick: async () => toast((await copyText(g.sharePath)) ? "Pfad kopiert – im Explorer einfügen" : "Kopieren nicht möglich", "success") }, "Kopieren")) : null,
       h("div", { class: "actions" },
         h("button", { class: "btn sm primary", onClick: () => startSession(g) }, "▶ Jetzt spielen"),
         g.steamUrl ? h("a", { class: "btn sm", href: g.steamUrl, target: "_blank", rel: "noopener" }, "Steam") : null,
@@ -115,6 +118,7 @@ export async function renderGames(main, params) {
 
   mount(main,
     h("div", { class: "page-head" }, h("h2", {}, "Spiele"),
+      h("button", { class: "btn", onClick: sharesDialog }, "💾 Freigaben"),
       h("button", { class: "btn primary", onClick: () => editGame() }, "+ Spiel")),
     tabsEl, content,
     h("button", { class: "btn primary fab", onClick: () => editGame(), "aria-label": "Spiel hinzufügen" }, "+"),
@@ -122,6 +126,64 @@ export async function renderGames(main, params) {
   await load();
   const offs = [on("games", load), on("sessions", load), on("events", load)];
   return () => offs.forEach(f => f());
+}
+
+/** Dialog: Windows-Freigaben verwalten, aus denen Spiele automatisch eingelesen werden. */
+export function sharesDialog() {
+  const list = h("div", { class: "stack" });
+  const path = input({ placeholder: "\\\\192.168.0.10\\Spiele", autocapitalize: "off", autocorrect: "off", spellcheck: false });
+  const user = input({ placeholder: "leer = Gastzugriff", autocapitalize: "off" });
+  const pass = input({ type: "password", placeholder: "Passwort", autocomplete: "off" });
+  let busy = false;
+
+  const scanInfo = (r) => `${r.folders} Ordner, ${r.added} neue Spiele` + (r.error ? ` – Fehler: ${r.error}` : "");
+
+  const load = async () => {
+    const shares = await api.get("/api/shares");
+    mount(list, shares.length ? shares.map(sh => h("div", { class: "card", style: { padding: "10px 12px" } },
+      h("div", { class: "row wrap" }, h("code", { class: "share-path grow" }, sh.path), h("span", { class: "chip" }, `${sh.gamesCount} Spiele`)),
+      h("div", { class: "small muted", style: { marginTop: "4px" } },
+        sh.addedByName ? `von ${sh.addedByName} · ` : "", sh.username ? `Benutzer ${sh.username} · ` : "Gast · ",
+        sh.lastScanAt ? `zuletzt ${timeAgo(sh.lastScanAt)}: ` : "noch nicht eingelesen",
+        sh.lastError ? h("span", { style: { color: "#ff9a9a" } }, sh.lastError) : (sh.lastScanAt ? `${sh.lastCount} Ordner` : "")),
+      h("div", { class: "row wrap", style: { marginTop: "8px" } },
+        h("button", { class: "btn sm", disabled: busy, onClick: async () => {
+          busy = true; toast("Lese Freigabe ein …");
+          try { const r = await api.post(`/api/shares/${sh.id}/scan`); toast(scanInfo(r), r.error ? "error" : "success", 5000); } finally { busy = false; load(); }
+        } }, "Neu einlesen"),
+        (store.isHost || (store.me && store.me.id === sh.addedById)) ? h("button", { class: "btn sm ghost danger", onClick: async () => {
+          if (await confirmDialog("Freigabe entfernen?", "Die daraus angelegten Spiele bleiben erhalten, nur der Ordnerpfad wird gelöst.", { okLabel: "Entfernen" })) { await api.del(`/api/shares/${sh.id}`); load(); }
+        } }, "Entfernen") : null),
+    )) : h("div", { class: "muted small" }, "Noch keine Freigabe eingetragen."));
+  };
+
+  modal({
+    title: "Spiele-Freigaben im LAN",
+    wide: true,
+    body: h("div", {},
+      h("p", { class: "muted small" }, "Jeder Unterordner einer Freigabe wird automatisch als Spiel angelegt (ohne Dubletten). Die App liest die Freigaben beim Start und alle 15 Minuten neu ein. Die Dateien holt sich jeder direkt vom PC: Pfad kopieren und im Explorer einfügen."),
+      list,
+      h("hr", { class: "sep" }),
+      h("h3", { style: { marginBottom: "8px" } }, "Freigabe hinzufügen"),
+      field("Pfad", path, "Am besten die IP-Adresse des PCs statt des Namens. Beispiel: \\\\192.168.0.10\\Spiele oder \\\\PC-NAME\\Freigabe\\Unterordner"),
+      h("div", { class: "form-row" }, field("Benutzer", user), field("Passwort", pass)),
+      h("button", { class: "btn primary", onClick: async () => {
+        if (!path.value.trim()) { toast("Pfad fehlt", "error"); return; }
+        const sh = await api.post("/api/shares", { path: path.value.trim(), username: user.value.trim(), password: pass.value });
+        path.value = ""; user.value = ""; pass.value = "";
+        toast("Freigabe eingetragen, lese ein …");
+        await load();
+        const r = await api.post(`/api/shares/${sh.id}/scan`);
+        toast(scanInfo(r), r.error ? "error" : "success", 6000);
+        load();
+      } }, "Hinzufügen und einlesen"),
+    ),
+    buttons: [
+      { label: "Alle neu einlesen", onClick: async () => { const rs = await api.post("/api/shares/scan"); toast(rs.map(scanInfo).join(" · ") || "Keine Freigaben", rs.some(r => r.error) ? "error" : "success", 6000); load(); return false; } },
+      { label: "Schließen" },
+    ],
+  });
+  load();
 }
 
 export function chosenChip(chosenBy) {

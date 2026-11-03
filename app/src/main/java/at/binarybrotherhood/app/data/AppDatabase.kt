@@ -15,9 +15,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ForumPostEntity::class, ForumCommentEntity::class,
         AttendanceEntity::class, ExpenseEntity::class, ExpenseShareEntity::class, PaymentEntity::class,
         EquipmentEntity::class, PollEntity::class, PollVoteEntity::class, XpLogEntity::class,
-        AuthTokenEntity::class,
+        AuthTokenEntity::class, ShareEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun polls(): PollDao
     abstract fun xp(): XpDao
     abstract fun auth(): AuthDao
+    abstract fun shares(): ShareDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
@@ -48,9 +49,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v3: Windows-Freigaben und Ordnerpfad pro Spiel. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `sharePath` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `games` ADD COLUMN `shareId` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `shares` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `path` TEXT NOT NULL, " +
+                        "`username` TEXT NOT NULL, `password` TEXT NOT NULL, `domain` TEXT NOT NULL, `addedById` INTEGER, `lastScanAt` INTEGER, " +
+                        "`lastError` TEXT NOT NULL, `lastCount` INTEGER NOT NULL, `knownFolders` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "binary_brotherhood.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

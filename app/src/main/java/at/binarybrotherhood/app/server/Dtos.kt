@@ -63,7 +63,25 @@ data class GameDto(
     val playedThisEvent: Boolean,
     val lastPlayedAt: Long?,
     val createdAt: Long,
+    val sharePath: String = "",
 )
+
+@Serializable
+data class NetworkShareDto(
+    val id: Long,
+    val path: String,
+    val username: String,
+    val addedById: Long?,
+    val addedByName: String?,
+    val lastScanAt: Long?,
+    val lastError: String,
+    val lastCount: Int,
+    val gamesCount: Int,
+    val createdAt: Long,
+)
+
+@Serializable
+data class ShareScanDto(val shareId: Long, val path: String, val folders: Int, val added: Int, val error: String? = null)
 
 @Serializable
 data class ParticipantDto(val id: Long, val name: String, val color: String, val hasAvatar: Boolean)
@@ -245,6 +263,7 @@ data class ErrorDto(val error: String)
 // ---------- Anfragen ----------
 
 @Serializable data class MemberRequest(val name: String, val motto: String = "", val color: String? = null)
+@Serializable data class ShareRequest(val path: String, val username: String = "", val password: String = "", val domain: String = "")
 @Serializable data class LoginRequest(val memberId: Long, val password: String)
 @Serializable data class RegisterRequest(val name: String, val password: String, val color: String? = null)
 @Serializable data class PasswordChangeRequest(val oldPassword: String = "", val newPassword: String)

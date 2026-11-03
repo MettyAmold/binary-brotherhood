@@ -11,8 +11,10 @@ ktor = "3.0.3"
 serialization = "1.7.3"
 coroutines = "1.9.0"
 zxing = "3.5.3"
+jcifs = "2.1.10"
 
 [libraries]
+jcifs-ng = { group = "eu.agno3.jcifs", name = "jcifs-ng", version.ref = "jcifs" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }

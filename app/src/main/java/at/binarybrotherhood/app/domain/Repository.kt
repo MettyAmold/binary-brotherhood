@@ -16,6 +16,7 @@ import at.binarybrotherhood.app.data.PollEntity
 import at.binarybrotherhood.app.data.PollVoteEntity
 import at.binarybrotherhood.app.data.SessionEntity
 import at.binarybrotherhood.app.data.SessionParticipantEntity
+import at.binarybrotherhood.app.data.ShareEntity
 import at.binarybrotherhood.app.data.SuggestionCommentEntity
 import at.binarybrotherhood.app.data.SuggestionEntity
 import at.binarybrotherhood.app.data.SuggestionVoteEntity
@@ -45,12 +46,17 @@ import at.binarybrotherhood.app.server.PollDto
 import at.binarybrotherhood.app.server.PollVoteDto
 import at.binarybrotherhood.app.server.SessionDto
 import at.binarybrotherhood.app.server.SessionRequest
+import at.binarybrotherhood.app.server.NetworkShareDto
+import at.binarybrotherhood.app.server.ShareRequest
+import at.binarybrotherhood.app.server.ShareScanDto
 import at.binarybrotherhood.app.server.ShareDto
 import at.binarybrotherhood.app.server.SpinDto
 import at.binarybrotherhood.app.server.SuggestionDto
 import at.binarybrotherhood.app.server.SuggestionRequest
 import at.binarybrotherhood.app.server.TransferDto
 import at.binarybrotherhood.app.server.XpEntryDto
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 import kotlin.random.Random
@@ -230,6 +236,7 @@ class Repository(private val context: Context, private val db: AppDatabase = App
                 selectedForNext = g.selectedForNext, timesPlayed = s.size,
                 playedThisEvent = s.any { it.eventId == event.id },
                 lastPlayedAt = s.maxOfOrNull { it.startedAt }, createdAt = g.createdAt,
+                sharePath = g.sharePath,
             )
         }
     }
@@ -266,6 +273,80 @@ class Repository(private val context: Context, private val db: AppDatabase = App
     suspend fun selectGame(id: Long, selected: Boolean) {
         db.games().byId(id) ?: throw NotFoundException("Spiel nicht gefunden")
         db.games().setSelected(id, selected)
+    }
+
+    // ---------------------------------------------------------------- Freigaben (SMB)
+
+    suspend fun shares(): List<NetworkShareDto> {
+        val members = db.members().all().associateBy { it.id }
+        val games = db.games().all().groupingBy { it.shareId }.eachCount()
+        return db.shares().all().map { it.toDto(members[it.addedById]?.name, games[it.id] ?: 0) }
+    }
+
+    private fun ShareEntity.toDto(addedByName: String?, gamesCount: Int) =
+        NetworkShareDto(id, path, username, addedById, addedByName, lastScanAt, lastError, lastCount, gamesCount, createdAt)
+
+    suspend fun createShare(req: ShareRequest, actorId: Long?): NetworkShareDto {
+        val path = ShareScanner.normalize(req.path)
+        if (db.shares().all().any { it.path.equals(path, ignoreCase = true) }) throw BadRequestException("Diese Freigabe ist schon eingetragen")
+        val id = db.shares().insert(
+            ShareEntity(path = path, username = req.username.trim(), password = req.password, domain = req.domain.trim(), addedById = actorId, createdAt = now())
+        )
+        return shares().first { it.id == id }
+    }
+
+    suspend fun deleteShare(id: Long, actorId: Long, isHost: Boolean) {
+        val s = db.shares().byId(id) ?: return
+        if (s.addedById != actorId && !isHost) throw ForbiddenException("Nur wer die Freigabe eingetragen hat, kann sie entfernen")
+        db.games().clearShare(id)
+        db.shares().delete(id)
+    }
+
+    suspend fun scanAll(): List<ShareScanDto> = db.shares().all().map { scanShare(it.id) }
+
+    /**
+     * Liest die Unterordner einer Freigabe ein. Neue Ordner werden zu Spielen, Dubletten (gleicher Name
+     * oder Pfad) übersprungen, früher gesehene Ordner nicht erneut angelegt. Fehler landen im Ergebnis.
+     */
+    suspend fun scanShare(id: Long): ShareScanDto {
+        val share = db.shares().byId(id) ?: throw NotFoundException("Freigabe nicht gefunden")
+        val folders = try {
+            withContext(Dispatchers.IO) { ShareScanner.listFolders(share) }
+        } catch (e: Exception) {
+            val msg = (e.message ?: e.javaClass.simpleName).take(200)
+            db.shares().update(share.copy(lastScanAt = now(), lastError = msg))
+            return ShareScanDto(share.id, share.path, 0, 0, msg)
+        }
+        val known = share.knownFolders.lines().filter { it.isNotBlank() }.toMutableSet()
+        val games = db.games().all().toMutableList()
+        var added = 0
+        for (folder in folders) {
+            val path = "${share.path}\\$folder"
+            if (games.any { it.sharePath.equals(path, ignoreCase = true) }) continue
+            val key = ShareScanner.gameKey(folder)
+            val sameName = games.firstOrNull { ShareScanner.gameKey(it.name) == key }
+            if (sameName != null) {
+                if (sameName.sharePath.isBlank()) {
+                    val updated = sameName.copy(sharePath = path, shareId = share.id)
+                    db.games().update(updated)
+                    games[games.indexOf(sameName)] = updated
+                }
+                continue
+            }
+            if (folder in known) continue
+            val gid = db.games().insert(
+                GameEntity(name = ShareScanner.displayName(folder), addedById = share.addedById, sharePath = path, shareId = share.id, createdAt = now())
+            )
+            games.add(GameEntity(id = gid, name = ShareScanner.displayName(folder), sharePath = path, shareId = share.id, createdAt = now()))
+            added++
+        }
+        // Ordner verschwunden → Pfad am Spiel lösen, das Spiel selbst bleibt
+        val present = folders.map { "${share.path}\\$it".lowercase() }.toSet()
+        games.filter { it.shareId == share.id && it.sharePath.lowercase() !in present }
+            .forEach { db.games().update(it.copy(sharePath = "", shareId = null)) }
+        known += folders
+        db.shares().update(share.copy(lastScanAt = now(), lastError = "", lastCount = folders.size, knownFolders = known.joinToString("\n")))
+        return ShareScanDto(share.id, share.path, folders.size, added)
     }
 
     private fun normalizeSteamUrl(url: String, appId: Long?): String {
