@@ -83,7 +83,7 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
         private val SessionKey = AttributeKey<AuthService.Session>("bb.session")
         /** Endpunkte, die ohne Login erreichbar sind (Login-Bildschirm, Avatare). */
         private val PUBLIC_PATHS = setOf("/api/auth/members", "/api/auth/login", "/api/auth/register", "/api/ping")
-        private val AVATAR_PATH = Regex("""/api/members/\d+/avatar""")
+        private val AVATAR_PATH = Regex("""/api/members/\d+/avatar|/api/sounds(/\w+)?""")
         private val LOOPBACK = setOf("127.0.0.1", "::1", "0:0:0:0:0:0:0:1", "localhost")
     }
 
@@ -457,6 +457,36 @@ class LanServer(private val context: Context, val port: Int = DEFAULT_PORT) {
                 val n = repo.applyEquipmentTemplate(call.receive<TemplateRequest>().fromEventId)
                 broadcast("equipment")
                 call.respond(OkDto(id = n.toLong()))
+            }
+        }
+
+        // ---- Klänge fürs Glücksrad (Host lädt eigene Audiodateien hoch)
+        route("/sounds") {
+            get { call.respondText(repo.sounds().toString(), ContentType.Application.Json) }
+            get("/{kind}") {
+                val kind = call.parameters["kind"]?.takeIf { it in setOf("spin", "winner") } ?: throw NotFoundException("Unbekannter Klang")
+                val (file, type) = repo.sound(kind) ?: throw NotFoundException("Kein eigener Klang hinterlegt")
+                call.response.header("Cache-Control", "public, max-age=86400")
+                call.respondBytes(file.readBytes(), ContentType.parse(type))
+            }
+            post("/{kind}") {
+                call.requireHost()
+                val kind = call.parameters["kind"]?.takeIf { it in setOf("spin", "winner") } ?: throw NotFoundException("Unbekannter Klang")
+                val ct = call.request.headers["Content-Type"] ?: ""
+                if (!ct.startsWith("audio/")) throw BadRequestException("Bitte eine Audiodatei hochladen (MP3, OGG, WAV, M4A)")
+                val data = call.receive<ByteArray>()
+                if (data.isEmpty()) throw BadRequestException("Datei ist leer")
+                if (data.size > 1_500_000) throw BadRequestException("Datei ist zu groß (max. 1,5 MB) – kurzen Clip nehmen")
+                val name = runCatching { java.net.URLDecoder.decode(call.request.headers["X-File-Name"] ?: kind, "UTF-8") }.getOrDefault(kind)
+                repo.setSound(kind, data, ct.substringBefore(';'), name)
+                broadcast("sounds")
+                call.respondText(repo.sounds().toString(), ContentType.Application.Json)
+            }
+            delete("/{kind}") {
+                call.requireHost()
+                repo.deleteSound(call.parameters["kind"] ?: "")
+                broadcast("sounds")
+                call.respondText(repo.sounds().toString(), ContentType.Application.Json)
             }
         }
 

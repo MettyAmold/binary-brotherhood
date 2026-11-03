@@ -629,6 +629,20 @@ export class Repo {
     return { shareId: share.id, path: share.path, folders: folders.length, added };
   }
 
+  // ================================================================ Klänge (Admin lädt eigene Audiodateien hoch)
+  async sounds() {
+    const rows = await this.db.all<{ kind: string; name: string; contentType: string; updatedAt: number }>("SELECT kind, name, contentType, updatedAt FROM sounds");
+    return Object.fromEntries(rows.map(r => [r.kind, { name: r.name, contentType: r.contentType, updatedAt: r.updatedAt, url: `/api/sounds/${r.kind}?v=${r.updatedAt}` }]));
+  }
+  async sound(kind: string) {
+    const r = await this.db.first<{ data: ArrayBuffer | number[]; contentType: string }>("SELECT data, contentType FROM sounds WHERE kind = ?", kind);
+    return r ? { data: toBytes(r.data), contentType: r.contentType } : null;
+  }
+  async setSound(kind: string, data: ArrayBuffer, contentType: string, name: string) {
+    await this.db.run("INSERT INTO sounds (kind, data, contentType, name, updatedAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(kind) DO UPDATE SET data = excluded.data, contentType = excluded.contentType, name = excluded.name, updatedAt = excluded.updatedAt", kind, data, contentType, name.slice(0, 80), now());
+  }
+  async deleteSound(kind: string) { await this.db.run("DELETE FROM sounds WHERE kind = ?", kind); }
+
   // ================================================================ Einstellungen / Admin
   async inviteCode() { return (await this.db.setting("inviteCode")) ?? (await this.regenerateInviteCode()); }
   async regenerateInviteCode() { const { randomCode } = await import("./auth"); const c = randomCode(8); await this.db.setSetting("inviteCode", c); return c; }

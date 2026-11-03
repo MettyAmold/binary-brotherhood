@@ -140,6 +140,37 @@ class Repository(private val context: Context, private val db: AppDatabase = App
 
     private fun EventEntity.toDto() = EventDto(id, name, year, startDate, days, isCurrent)
 
+    // ---------------------------------------------------------------- Klänge (Host lädt eigene Audiodateien hoch)
+
+    private val soundDir: File get() = File(context.filesDir, "sounds").also { it.mkdirs() }
+    private fun soundFile(kind: String) = File(soundDir, "$kind.bin")
+    private fun soundMeta(kind: String) = File(soundDir, "$kind.meta")
+
+    fun sounds(): JsonObject = buildJsonObject {
+        for (kind in listOf("spin", "winner")) {
+            val f = soundFile(kind)
+            if (!f.exists()) continue
+            val meta = runCatching { soundMeta(kind).readText().split("\n") }.getOrDefault(listOf("audio/mpeg", kind))
+            put(kind, buildJsonObject {
+                put("name", meta.getOrElse(1) { kind }); put("contentType", meta.getOrElse(0) { "audio/mpeg" })
+                put("updatedAt", f.lastModified()); put("url", "/api/sounds/$kind?v=${f.lastModified()}")
+            })
+        }
+    }
+
+    fun sound(kind: String): Pair<File, String>? {
+        val f = soundFile(kind)
+        if (!f.exists()) return null
+        return f to (runCatching { soundMeta(kind).readText().lineSequence().first() }.getOrDefault("audio/mpeg"))
+    }
+
+    fun setSound(kind: String, data: ByteArray, contentType: String, name: String) {
+        soundFile(kind).writeBytes(data)
+        soundMeta(kind).writeText("$contentType\n${name.take(80)}")
+    }
+
+    fun deleteSound(kind: String) { soundFile(kind).delete(); soundMeta(kind).delete() }
+
     // ---------------------------------------------------------------- Export (Umzug in die Cloud)
 
     /** Alle Tabellen als JSON im Format "binary-brotherhood/1", das der Cloud-Import versteht. */

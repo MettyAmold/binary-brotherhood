@@ -1,8 +1,8 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
 import { h, mount, avatar, modal, toast, field, input, checkbox } from "./ui.js";
 import { store, on, connect } from "./store.js";
-import { api } from "./api.js";
-import { initAudio, playSound, banner, systemNotify, requestNotificationPermission } from "./notify.js";
+import { api, authHeaders } from "./api.js";
+import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
 import { renderGames } from "./views/games.js";
 import { renderWheel } from "./views/wheel.js";
 import { renderSuggestions } from "./views/suggestions.js";
@@ -179,6 +179,7 @@ function profileMenu() {
     body: h("div", { class: "pick-list" },
       h("div", { class: "it", onClick: () => { ctx.close(); location.hash = `#/members/${me.id}`; } }, h("span", {}, "🛡️"), h("span", { class: "grow" }, "Mein Profil")),
       h("div", { class: "it", onClick: () => { ctx.close(); changePasswordDialog(); } }, h("span", {}, "🔑"), h("span", { class: "grow" }, "Passwort ändern")),
+      (store.isAdmin || store.isHost) ? h("div", { class: "it", onClick: () => { ctx.close(); soundsDialog(); } }, h("span", {}, "🔊"), h("span", { class: "grow" }, "Glücksrad-Sounds")) : null,
       ("Notification" in window) ? h("div", { class: "it", onClick: async () => { ctx.close(); const r = await requestNotificationPermission(); toast(r === "granted" ? "Benachrichtigungen aktiv – auch wenn der Tab im Hintergrund ist" : "Benachrichtigungen nicht erlaubt", r === "granted" ? "success" : "error"); } }, h("span", {}, "🔔"), h("span", { class: "grow" }, "Benachrichtigungen erlauben")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); inviteDialog(); } }, h("span", {}, "✉️"), h("span", { class: "grow" }, "Einladungscode")) : null,
       store.isAdmin && store.mode === "cloud" ? h("div", { class: "it", onClick: () => { ctx.close(); importDialog(); } }, h("span", {}, "📦"), h("span", { class: "grow" }, "Daten vom Handy importieren")) : null,
@@ -205,6 +206,40 @@ export function changePasswordDialog() {
     } }],
   });
   chainEnter([old, pw, pw2]);
+}
+
+/** Admin/Host: eigene Klänge fürs Glücksrad hochladen, probehören, zurücksetzen. */
+async function soundsDialog() {
+  const KINDS = [["spin", "Beim Drehen", "Standard: Glocken-Bimmeln"], ["winner", "Beim Gewinner", "Standard: kurze Fanfare"]];
+  const list = h("div", { class: "stack" });
+  const load = async () => {
+    const sounds = await api.get("/api/sounds");
+    store.refreshSounds();
+    mount(list, KINDS.map(([kind, label, fallback]) => {
+      const cur = sounds[kind];
+      const file = h("input", { type: "file", accept: "audio/*", class: "hidden", onChange: async () => {
+        const f = file.files[0]; if (!f) return;
+        if (!f.type.startsWith("audio/")) { toast("Bitte eine Audiodatei wählen (MP3, OGG, WAV, M4A)", "error"); return; }
+        if (f.size > 1_500_000) { toast("Datei ist zu groß (max. 1,5 MB) – kurzen Clip nehmen", "error"); return; }
+        toast("Lade hoch …");
+        const res = await fetch(`/api/sounds/${kind}`, { method: "POST", headers: { ...authHeaders(), "Content-Type": f.type, "X-File-Name": encodeURIComponent(f.name) }, body: f });
+        if (!res.ok) { let msg = "Upload fehlgeschlagen"; try { msg = (await res.json()).error || msg; } catch { /* kein JSON */ } toast(msg, "error"); return; }
+        toast("Klang gespeichert – gilt sofort für alle", "success"); load();
+      } });
+      return h("div", { class: "card", style: { padding: "10px 12px" } },
+        h("div", { class: "row between wrap" }, h("strong", {}, label), cur ? h("span", { class: "chip gold" }, cur.name) : h("span", { class: "chip" }, fallback)),
+        h("div", { class: "row wrap", style: { marginTop: "8px" } },
+          h("button", { class: "btn sm", onClick: () => playSound(kind) }, "▶ Probehören"),
+          h("button", { class: "btn sm primary", onClick: () => file.click() }, cur ? "Andere Datei" : "Datei wählen"), file,
+          cur ? h("button", { class: "btn sm ghost danger", onClick: async () => { await api.del(`/api/sounds/${kind}`); toast("Zurückgesetzt auf Standard"); load(); } }, "Zurücksetzen") : null));
+    }));
+  };
+  modal({
+    title: "Glücksrad-Sounds",
+    body: h("div", {}, h("p", { class: "muted small" }, "Kurze Clips (MP3, OGG, WAV, M4A, max. 1,5 MB). Sie werden auf dem Server gespeichert und bei jedem Dreh in allen angemeldeten Browsern abgespielt."), list),
+    buttons: [{ label: "Schließen" }],
+  });
+  load();
 }
 
 /** Admin: Einladungscode anzeigen, kopieren, neu erzeugen. */

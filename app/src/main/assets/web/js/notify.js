@@ -2,8 +2,21 @@
 // durch Audiodateien ersetzbar) und optional System-Benachrichtigung, wenn der Tab im Hintergrund ist.
 import { h } from "./ui.js";
 
-/** Eigene Audiodateien eintragen (z. B. "/sounds/spin.mp3"); null = synthetischer Glockenklang. */
+/** Vom Admin hochgeladene Klänge (URL je Art); fehlt einer, kommt der synthetische Glockenklang. */
 export const SOUNDS = { spin: null, winner: null };
+const preloaded = {};
+
+/** Klang-URLs vom Server übernehmen und vorladen, damit sie beim Spin sofort abspielbar sind. */
+export function setSoundUrls(map) {
+  for (const kind of ["spin", "winner"]) {
+    const url = map && map[kind] ? map[kind].url : null;
+    SOUNDS[kind] = url;
+    if (url && (!preloaded[kind] || preloaded[kind].src !== new URL(url, location.href).href)) {
+      try { const a = new Audio(url); a.preload = "auto"; preloaded[kind] = a; } catch { /* ignorieren */ }
+    }
+    if (!url) delete preloaded[kind];
+  }
+}
 
 let audioCtx = null;
 let unlocked = false;
@@ -37,9 +50,9 @@ function bell(freq, at, dur = 1.2, gain = 0.25) {
   }
 }
 
-export function playSound(kind) {
-  const url = SOUNDS[kind];
-  if (url) { try { const a = new Audio(url); a.volume = 0.8; a.play().catch(() => {}); } catch { /* ignorieren */ } return; }
+export function playSound(kind, { forceSynth = false } = {}) {
+  const url = forceSynth ? null : SOUNDS[kind];
+  if (url) { try { const a = preloaded[kind] ? preloaded[kind].cloneNode() : new Audio(url); a.volume = 0.8; a.play().catch(() => {}); } catch { /* ignorieren */ } return; }
   if (!audioCtx || !unlocked) return; // noch keine Nutzeraktion → Browser würde den Ton blockieren
   const t = audioCtx.currentTime + 0.02;
   if (kind === "winner") { bell(659, t, 1.0); bell(784, t + 0.18, 1.0); bell(1047, t + 0.36, 1.8, 0.3); } // Fanfare E-G-C

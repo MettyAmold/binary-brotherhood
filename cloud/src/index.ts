@@ -189,6 +189,29 @@ post("/api/equipment/{id}/claim", async c => { const r = await c.body<{ memberId
 post("/api/equipment/{id}/done", async c => { const e = await c.repo.setEquipmentDone(id(c), !!(await c.body<{ done: boolean }>()).done); await c.broadcast("equipment"); await c.broadcast("members"); return e; });
 post("/api/equipment/template", async c => { const n = await c.repo.applyEquipmentTemplate((await c.body<{ fromEventId?: number | null }>()).fromEventId ?? null); await c.broadcast("equipment"); return ok(n); });
 
+// ---------------- Klänge
+const SOUND_KINDS = new Set(["spin", "winner"]);
+const soundKind = (c: Ctx) => { const k = c.params.kind; if (!SOUND_KINDS.has(k)) throw new NotFound("Unbekannter Klang"); return k; };
+get("/api/sounds", async c => c.repo.sounds());
+get("/api/sounds/{kind}", async c => {
+  const s = await c.repo.sound(soundKind(c));
+  if (!s) throw new NotFound("Kein eigener Klang hinterlegt");
+  return new Response(s.data as unknown as BodyInit, { headers: { "Content-Type": s.contentType, "Cache-Control": "public, max-age=86400" } });
+});
+post("/api/sounds/{kind}", async c => {
+  requireAdmin(c);
+  const kind = soundKind(c);
+  const ct = c.req.headers.get("Content-Type") ?? "";
+  if (!ct.startsWith("audio/")) throw new BadRequest("Bitte eine Audiodatei hochladen (MP3, OGG, WAV, M4A)");
+  const data = await c.req.arrayBuffer();
+  if (!data.byteLength) throw new BadRequest("Datei ist leer");
+  if (data.byteLength > 1_500_000) throw new BadRequest("Datei ist zu groß (max. 1,5 MB) – kurzen Clip nehmen");
+  await c.repo.setSound(kind, data, ct.split(";")[0], decodeURIComponent(c.req.headers.get("X-File-Name") ?? kind));
+  await c.broadcast("sounds");
+  return c.repo.sounds();
+});
+del("/api/sounds/{kind}", async c => { requireAdmin(c); await c.repo.deleteSound(soundKind(c)); await c.broadcast("sounds"); return c.repo.sounds(); });
+
 // ---------------- Steam
 get("/api/steam/search", async c => { try { return await steamSearch(c.url.searchParams.get("q") ?? ""); } catch (e) { throw new BadRequest(`Steam nicht erreichbar: ${(e as Error).message}`); } });
 get("/api/steam/app/{id}", async c => { let d; try { d = await steamDetails(id(c)); } catch (e) { throw new BadRequest(`Steam nicht erreichbar: ${(e as Error).message}`); } if (!d) throw new NotFound("Steam-App nicht gefunden"); return d; });
@@ -254,7 +277,7 @@ export default {
     const repo = new Repo(db);
     const token = req.headers.get("Authorization")?.replace(/^Bearer\s*/i, "").trim() ?? null;
     const sess = await resolveSession(db, token);
-    const isAvatarGet = req.method === "GET" && /^\/api\/members\/\d+\/avatar$/.test(url.pathname);
+    const isAvatarGet = req.method === "GET" && (/^\/api\/members\/\d+\/avatar$/.test(url.pathname) || /^\/api\/sounds(\/\w+)?$/.test(url.pathname));
     const isFolderUpload = req.method === "POST" && /^\/api\/shares\/\d+\/folders$/.test(url.pathname);
     if (!sess && !PUBLIC.has(url.pathname) && !isAvatarGet && !isFolderUpload) return json({ error: "Bitte anmelden" }, 401);
 

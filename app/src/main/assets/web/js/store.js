@@ -1,5 +1,6 @@
 // Globaler Zustand: aktuelles Mitglied, Mitgliederliste, LAN-Ausgabe, Live-Verbindung.
 import { api, getToken, setToken } from "./api.js";
+import { setSoundUrls } from "./notify.js";
 
 const listeners = new Map(); // topic -> Set<fn>
 
@@ -47,8 +48,13 @@ export const store = {
     emit("me");
   },
 
+  async refreshSounds() {
+    try { setSoundUrls(await api.get("/api/sounds", { silent: true })); } catch { /* keine eigenen Klänge */ }
+  },
+
   async bootstrap() {
     const b = await api.get("/api/bootstrap");
+    this.refreshSounds();
     this.members = b.members;
     this.event = b.event;
     this.events = b.events;
@@ -95,6 +101,7 @@ function startPolling() {
       for (const ch of r.changes) {
         if (ch.topic === "members") store.refreshMembers().catch(() => {});
         else if (ch.topic === "events") store.refreshEvents().catch(() => {});
+        else if (ch.topic === "sounds") store.refreshSounds();
         emit(ch.topic);
       }
     } catch { /* nächster Versuch */ }
@@ -120,6 +127,7 @@ export function connect() {
     if (msg.type === "change") {
       if (msg.topic === "members") store.refreshMembers().catch(() => {});
       else if (msg.topic === "events") store.refreshEvents().catch(() => {});
+      else if (msg.topic === "sounds") store.refreshSounds();
       emit(msg.topic, msg.payload);
     }
   };
