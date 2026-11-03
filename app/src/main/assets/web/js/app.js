@@ -1,5 +1,5 @@
 // Einstieg: Login, Shell, Navigation und Routing zu den Ansichten.
-import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog, initials } from "./ui.js";
+import { h, mount, avatar, modal, toast, field, input, checkbox, confirmDialog, initials, dayLabel } from "./ui.js";
 import { store, on, connect } from "./store.js";
 import { api, authHeaders } from "./api.js";
 import { initAudio, playSound, banner, systemNotify, requestNotificationPermission, SOUNDS } from "./notify.js";
@@ -109,6 +109,45 @@ function discordSettingsDialog() {
     } }],
   });
 }
+
+// ---------- Anwesenheit: während der LAN fragen, wer sich noch nicht eingetragen hat ----------
+let attendancePromptOpen = false;
+const snoozeKey = () => `bb.attSnooze.${store.event?.id}.${store.me?.id}`;
+async function checkAttendance() {
+  if (attendancePromptOpen || !store.me || !store.event) return;
+  const day = store.currentDay();
+  if (!day) return; // LAN läuft gerade nicht
+  const d = new Date(); const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; // lokales Datum
+  try { if (localStorage.getItem(snoozeKey()) === today) return; } catch { /* privat */ }
+  let costs; try { costs = await api.get("/api/costs", { silent: true }); } catch { return; }
+  if ((costs.attendance[store.me.id] || []).length) return; // schon eingetragen
+  attendancePromptOpen = true;
+  const ev = store.event;
+  const boxes = Array.from({ length: costs.days }, (_, i) => ({ day: i + 1, box: h("input", { type: "checkbox", checked: i + 1 >= day }) }));
+  playSound("spin");
+  modal({
+    title: `🎮 ${ev.name} läuft!`,
+    body: h("div", {},
+      h("p", {}, `Heute ist Tag ${day}. An welchen Tagen bist du dabei?`),
+      h("p", { class: "small muted" }, "Die Anwesenheit bestimmt, wie Einkäufe aufgeteilt werden und wer bei Runden und Turnieren zur Auswahl steht. Jeder Tag bringt +30 XP."),
+      h("div", { class: "pick-list" }, boxes.map(b => h("label", { class: "it" }, b.box,
+        h("span", { class: "grow" }, `Tag ${b.day} · ${dayLabel(ev.startDate, b.day)}`), b.day === day ? h("span", { class: "chip gold" }, "heute") : null)))),
+    onClose: () => { attendancePromptOpen = false; },
+    buttons: [
+      { label: "Später", onClick: () => { try { localStorage.setItem(snoozeKey(), today); } catch { /* privat */ } } },
+      { label: "Bin nicht dabei", onClick: () => { try { localStorage.setItem(snoozeKey(), "never"); } catch { /* privat */ } } },
+      { label: "Eintragen", class: "primary", onClick: async () => {
+        const days = boxes.filter(b => b.box.checked).map(b => b.day);
+        if (!days.length) { toast("Mindestens einen Tag wählen – oder „Bin nicht dabei“", "error"); return false; }
+        await api.put("/api/costs/attendance", { memberId: store.me.id, days });
+        toast(`Eingetragen für ${days.length} Tag${days.length === 1 ? "" : "e"} (+${days.length * 30} XP)`, "success");
+      } },
+    ],
+  });
+}
+// Auch bei offener App: beim Zurückkehren in den Tab und stündlich prüfen (die LAN beginnt ja irgendwann)
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkAttendance(); });
+setInterval(checkAttendance, 60 * 60 * 1000);
 
 // ---------- Änderungsprotokoll für Admins ----------
 async function showChangelog(onlyNew) {
@@ -462,7 +501,8 @@ async function init() {
   connect();
   await renderRoute();
   loadDiscord();
-  if (store.isAdmin && store.mode === "cloud") showChangelog(true);
+  if (store.isAdmin && store.mode === "cloud") await showChangelog(true);
+  checkAttendance();
 }
 
 window.addEventListener("bb:unauthorized", () => {
@@ -476,6 +516,7 @@ const refreshOnline = () => { const c = document.getElementById("online-chip"); 
 on("connection", refreshOnline);
 on("presence", refreshOnline);
 on("discord", () => loadDiscord());
+on("events", () => checkAttendance()); // z. B. wenn der Admin das Startdatum ändert
 on("members", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("me", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("events", () => { const chip = document.querySelector(".event-chip"); if (chip && store.event) chip.textContent = store.event.name; });
