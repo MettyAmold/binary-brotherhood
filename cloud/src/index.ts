@@ -143,6 +143,56 @@ post("/api/shares/{id}/folders", async c => {
   await c.broadcast("games"); await c.broadcast("shares");
   return res;
 });
+/** PowerShell-Skript zum Einrichten der Freigabe und Hochladen der Ordnerliste – per `irm <url> | iex` als Ganzes ausführbar. */
+get("/api/shares/{id}/setup.ps1", async c => {
+  const share = await c.repo.shareByUploadKey(id(c), c.url.searchParams.get("key") ?? "");
+  const q = c.url.searchParams;
+  const ps = (v: string) => "'" + String(v).replace(/'/g, "''") + "'";
+  const folder = q.get("folder") || "D:\\Spiele";
+  const shareName = (q.get("share") || share.path.split("\\").filter(Boolean)[1] || "Spiele").replace(/[\\/]/g, "");
+  const setup = q.get("setup") === "1";
+  const user = q.get("user") || "bbl", pass = q.get("pass") || "";
+  const lines = [
+    `# BINARY BROTHERHOOD – Spielordner melden${setup ? " und Freigabe einrichten" : ""}`,
+    `$ErrorActionPreference = 'Stop'`,
+    `$path = ${ps(folder)}`,
+    `if (-not (Test-Path -LiteralPath $path)) { throw "Ordner $path gibt es nicht" }`,
+  ];
+  if (setup) {
+    if (!pass) throw new BadRequest("pass fehlt");
+    lines.push(
+      `$share = ${ps(shareName)}; $user = ${ps(user)}; $pass = ${ps(pass)}`,
+      `$id = [Security.Principal.WindowsIdentity]::GetCurrent(); $isAdmin = (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`,
+      `if (-not $isAdmin) { throw 'Bitte PowerShell als Administrator starten (Rechtsklick -> Als Administrator ausführen)' }`,
+      `$secure = ConvertTo-SecureString $pass -AsPlainText -Force`,
+      `# 1. Eigener Lesebenutzer (erscheint nicht am Anmeldebildschirm)`,
+      `if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) { Set-LocalUser -Name $user -Password $secure -PasswordNeverExpires $true } else { New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -Description 'BINARY BROTHERHOOD Spiele-Freigabe' | Out-Null }`,
+      `$reg = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'`,
+      `New-Item -Path $reg -Force | Out-Null; New-ItemProperty -Path $reg -Name $user -Value 0 -PropertyType DWord -Force | Out-Null`,
+      `# 2. Freigabe mit Leserecht`,
+      `if (Get-SmbShare -Name $share -ErrorAction SilentlyContinue) { Grant-SmbShareAccess -Name $share -AccountName $user -AccessRight Read -Force | Out-Null } else { New-SmbShare -Name $share -Path $path -ReadAccess $user | Out-Null }`,
+      `# 3. NTFS-Leserecht auf den Ordner`,
+      `$acl = Get-Acl -LiteralPath $path`,
+      `$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')`,
+      `$acl.AddAccessRule($rule); Set-Acl -LiteralPath $path -AclObject $acl`,
+      `# 4. Netzwerkprofil auf Privat und Firewall-Regeln für die Freigabe`,
+      `Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -eq 'Public' } | Set-NetConnectionProfile -NetworkCategory Private`,
+      `foreach ($g in 'Datei- und Druckerfreigabe', 'File and Printer Sharing') { Enable-NetFirewallRule -DisplayGroup $g -ErrorAction SilentlyContinue }`,
+      `Set-SmbServerConfiguration -EnableSMB2Protocol $true -Force`,
+      `Write-Host ('Freigabe eingerichtet: \\\\' + $env:COMPUTERNAME + '\\' + $share) -ForegroundColor Green`,
+    );
+  }
+  lines.push(
+    `# Ordnerliste an die App melden`,
+    `$folders = @(Get-ChildItem -LiteralPath $path -Directory | Select-Object -ExpandProperty Name)`,
+    `$body = [System.Text.Encoding]::UTF8.GetBytes((@{ folders = $folders } | ConvertTo-Json -Compress))`,
+    `$r = Invoke-RestMethod -Method Post -Uri ${ps(`${c.url.origin}/api/shares/${share.id}/folders`)} -Headers @{ 'X-Share-Key' = ${ps(share.uploadKey)} } -ContentType 'application/json; charset=utf-8' -Body $body`,
+    `Write-Host ''; Write-Host ('Fertig! ' + $r.folders + ' Ordner gemeldet, ' + $r.added + ' neue Spiele.') -ForegroundColor Green`,
+  );
+  // Als ein Block, damit auch zeilenweises Einfügen in die Konsole als Ganzes läuft
+  const script = "& {\r\n" + lines.map(l => "  " + l).join("\r\n") + "\r\n}\r\n";
+  return new Response(script, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+});
 get("/api/shares/wizard", async c => ({ clientIp: c.req.headers.get("CF-Connecting-IP") ?? "", clientIsHostPhone: false, hostAddresses: [], mode: "cloud", base: c.url.origin }));
 
 // ---------------- Runden
@@ -437,7 +487,7 @@ export default {
     const token = req.headers.get("Authorization")?.replace(/^Bearer\s*/i, "").trim() ?? null;
     const sess = await resolveSession(db, token);
     const isAvatarGet = req.method === "GET" && (/^\/api\/members\/\d+\/avatar$/.test(url.pathname) || /^\/api\/sounds(\/\w+)?$/.test(url.pathname) || /^\/api\/media\/\d+$/.test(url.pathname));
-    const isFolderUpload = req.method === "POST" && /^\/api\/shares\/\d+\/folders$/.test(url.pathname);
+    const isFolderUpload = (req.method === "POST" && /^\/api\/shares\/\d+\/folders$/.test(url.pathname)) || (req.method === "GET" && /^\/api\/shares\/\d+\/setup\.ps1$/.test(url.pathname));
     if (!sess && !PUBLIC.has(url.pathname) && !isAvatarGet && !isFolderUpload) return json({ error: "Bitte anmelden" }, 401);
 
     const broadcast = async (topic: string, payload?: unknown) => {

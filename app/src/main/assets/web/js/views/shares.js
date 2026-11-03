@@ -72,13 +72,14 @@ export function sharesDialog() {
 /** Cloud: Skript zum erneuten Hochladen der Ordnerliste einer bestehenden Freigabe. */
 function uploadScriptDialog(sh) {
   const folder = input({ value: "D:\\Spiele", spellcheck: false });
-  const script = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false });
-  const refresh = () => { script.value = buildUploadScript({ folder: folder.value.trim() || "D:\\Spiele", base: location.origin, shareId: sh.id, uploadKey: sh.uploadKey, setupShare: false }); };
+  const line = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false, style: { minHeight: "64px" } });
+  const shareName = sh.path.split("\\").filter(Boolean)[1] || "Spiele";
+  const refresh = () => { line.value = oneLiner({ base: location.origin, shareId: sh.id, uploadKey: sh.uploadKey, folder: folder.value.trim() || "D:\\Spiele", shareName, setupShare: false }); };
   folder.addEventListener("input", refresh); refresh();
   modal({
     title: "Ordnerliste aktualisieren", wide: true,
-    body: h("div", {}, h("p", { class: "small" }, "Am PC in PowerShell einfügen, dann sind neue Spielordner in der App."), field("Ordner am PC", folder), script),
-    buttons: [{ label: "Skript kopieren", onClick: async () => { toast((await copyText(script.value)) ? "Skript kopiert" : "Kopieren nicht möglich", "success"); return false; } }, { label: "Schließen" }],
+    body: h("div", {}, h("p", { class: "small" }, "Diese eine Zeile am PC in PowerShell einfügen (keine Administratorrechte nötig), dann sind neue Spielordner in der App."), field("Ordner am PC", folder), line),
+    buttons: [{ label: "Befehl kopieren", onClick: async () => { toast((await copyText(line.value)) ? "Befehl kopiert" : "Kopieren nicht möglich", "success"); return false; } }, { label: "Schließen" }],
   });
 }
 
@@ -97,20 +98,18 @@ function randomPassword(n = 12) {
 /** PowerShell-Skript (als Administrator), das Lesebenutzer, Freigabe, Rechte und Firewall einrichtet. */
 export function buildSetupScript({ folder, shareName, user, pass }) {
   const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-  return [
+  const lines = [
     `# BINARY BROTHERHOOD – Spiele-Freigabe einrichten (als Administrator ausführen)`,
     `$ErrorActionPreference = 'Stop'`,
     `$path = ${q(folder)}; $share = ${q(shareName)}; $user = ${q(user)}; $pass = ${q(pass)}`,
     `if (-not (Test-Path $path)) { throw "Ordner $path gibt es nicht" }`,
     `$secure = ConvertTo-SecureString $pass -AsPlainText -Force`,
     `# 1. Eigener Lesebenutzer (erscheint nicht am Anmeldebildschirm)`,
-    `if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) { Set-LocalUser -Name $user -Password $secure -PasswordNeverExpires $true }`,
-    `else { New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -Description 'BINARY BROTHERHOOD Spiele-Freigabe' | Out-Null }`,
+    `if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) { Set-LocalUser -Name $user -Password $secure -PasswordNeverExpires $true } else { New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -Description 'BINARY BROTHERHOOD Spiele-Freigabe' | Out-Null }`,
     `$reg = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'`,
     `New-Item -Path $reg -Force | Out-Null; New-ItemProperty -Path $reg -Name $user -Value 0 -PropertyType DWord -Force | Out-Null`,
     `# 2. Freigabe mit Leserecht`,
-    `if (Get-SmbShare -Name $share -ErrorAction SilentlyContinue) { Grant-SmbShareAccess -Name $share -AccountName $user -AccessRight Read -Force | Out-Null }`,
-    `else { New-SmbShare -Name $share -Path $path -ReadAccess $user | Out-Null }`,
+    `if (Get-SmbShare -Name $share -ErrorAction SilentlyContinue) { Grant-SmbShareAccess -Name $share -AccountName $user -AccessRight Read -Force | Out-Null } else { New-SmbShare -Name $share -Path $path -ReadAccess $user | Out-Null }`,
     `# 3. NTFS-Leserecht auf den Ordner`,
     `$acl = Get-Acl $path`,
     `$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')`,
@@ -121,7 +120,9 @@ export function buildSetupScript({ folder, shareName, user, pass }) {
     `Set-SmbServerConfiguration -EnableSMB2Protocol $true -Force`,
     `Write-Host ''; Write-Host 'Fertig! Freigabe:' ('\\\\' + $env:COMPUTERNAME + '\\' + $share) -ForegroundColor Green`,
     `Write-Host 'IP-Adressen dieses PCs:' ((Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.*' }).IPAddress -join ', ')`,
-  ].join("\r\n");
+  ];
+  // Als ein Block (& { … }), damit die Konsole beim Einfügen alles zusammen ausführt statt Zeile für Zeile
+  return "& {\r\n" + lines.map(l => "  " + l).join("\r\n") + "\r\n}\r\n";
 }
 
 /** Cloud-Skript: lädt die Unterordner des Spiele-Ordners zur App hoch; optional vorher die Windows-Freigabe einrichten. */
@@ -134,7 +135,8 @@ export function buildUploadScript({ folder, base, shareId, uploadKey, setupShare
     `if (-not (Test-Path $path)) { throw "Ordner $path gibt es nicht" }`,
   ];
   if (setupShare) {
-    lines.push(...buildSetupScript({ folder, shareName, user, pass }).split("\r\n").slice(2).filter(l => !l.startsWith("$path = ")));
+    const inner = buildSetupScript({ folder, shareName, user, pass }).split("\r\n").map(l => l.replace(/^  /, "")).filter(l => l && l !== "& {" && l !== "}");
+    lines.push(...inner.slice(2).filter(l => !l.startsWith("$path = ")));
   }
   lines.push(
     `# Ordnerliste hochladen`,
@@ -143,7 +145,14 @@ export function buildUploadScript({ folder, base, shareId, uploadKey, setupShare
     `$r = Invoke-RestMethod -Method Post -Uri ${q(base + "/api/shares/" + shareId + "/folders")} -Headers @{ 'X-Share-Key' = ${q(uploadKey)} } -ContentType 'application/json; charset=utf-8' -Body $body`,
     `Write-Host ''; Write-Host ("Fertig! " + $r.folders + " Ordner gemeldet, " + $r.added + " neue Spiele.") -ForegroundColor Green`,
   );
-  return lines.join("\r\n");
+  return "& {\r\n" + lines.map(l => "  " + l).join("\r\n") + "\r\n}\r\n";
+}
+
+/** Eine Zeile für PowerShell: holt das Skript vom Server und führt es als Ganzes aus. */
+export function oneLiner({ base, shareId, uploadKey, folder, shareName, setupShare, user, pass }) {
+  const p = new URLSearchParams({ key: uploadKey, folder, share: shareName });
+  if (setupShare) { p.set("setup", "1"); p.set("user", user); p.set("pass", pass); }
+  return `irm '${base}/api/shares/${shareId}/setup.ps1?${p.toString()}' | iex`;
 }
 
 /** Assistent für die Cloud: Pfad angeben, Skript am PC ausführen, Ergebnis abwarten. */
@@ -175,18 +184,21 @@ async function cloudShareWizard() {
   };
 
   const step2 = () => {
-    const script = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false });
-    script.value = buildUploadScript({ folder: st.folder, base: info.base || location.origin, shareId: st.share.id, uploadKey: st.share.uploadKey, setupShare: st.setupShare, shareName: st.shareName, user: st.user, pass: st.pass });
+    const args = { folder: st.folder, base: info.base || location.origin, shareId: st.share.id, uploadKey: st.share.uploadKey, setupShare: st.setupShare, shareName: st.shareName, user: st.user, pass: st.pass };
+    const line = oneLiner(args);
+    const lineBox = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false, style: { minHeight: "64px" } }); lineBox.value = line;
+    const script = h("textarea", { class: "textarea script-box", readonly: true, spellcheck: false }); script.value = buildUploadScript(args);
     mount(body, stepsBar(2),
       h("ol", { class: "small", style: { paddingLeft: "20px", lineHeight: "1.7" } },
-        h("li", {}, "Unten auf „Skript kopieren“ tippen."),
+        h("li", {}, "Unten auf „Befehl kopieren“ tippen (eine einzige Zeile)."),
         h("li", {}, "Am PC die Windows-Taste drücken, „powershell“ tippen", st.setupShare ? [" und ", h("strong", {}, "„Als Administrator ausführen“"), " wählen."] : " und öffnen."),
         h("li", {}, "Im blauen Fenster Rechtsklick (fügt ein) und Enter drücken."),
         h("li", {}, "Wenn „Fertig!“ erscheint: hier auf „Weiter“.")),
-      script,
+      lineBox,
+      h("details", { style: { marginTop: "8px" } }, h("summary", { class: "small muted", style: { cursor: "pointer" } }, "Was der Befehl macht (vollständiges Skript)"), script),
       h("div", { class: "row wrap", style: { marginTop: "14px", justifyContent: "flex-end" } },
         h("button", { class: "btn ghost", onClick: step1 }, "Zurück"),
-        h("button", { class: "btn", onClick: async () => toast((await copyText(script.value)) ? "Skript kopiert" : "Kopieren nicht möglich – Text markieren und manuell kopieren", "success") }, "Skript kopieren"),
+        h("button", { class: "btn", onClick: async () => toast((await copyText(line)) ? "Befehl kopiert" : "Kopieren nicht möglich – Text markieren und manuell kopieren", "success") }, "Befehl kopieren"),
         h("button", { class: "btn primary", onClick: step3 }, "Weiter")));
   };
 
