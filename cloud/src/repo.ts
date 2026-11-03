@@ -22,6 +22,7 @@ interface CommentRow { id: number; authorId: number | null; text: string; create
 interface ExpenseRow { id: number; eventId: number; title: string; amountCents: number; paidById: number; day: number | null; note: string; createdAt: number }
 interface EquipmentRow { id: number; eventId: number; name: string; category: string; quantity: number; note: string; bringerId: number | null; done: number; createdAt: number }
 interface PollRow { id: number; eventId: number; open: number; winnerGameId: number | null; createdAt: number; closedAt: number | null }
+interface MediaRow { id: number; contentType: string; size: number; name: string; postId: number | null; commentId: number | null }
 interface ShareRow { id: number; path: string; addedById: number | null; lastScanAt: number | null; lastError: string; lastCount: number; knownFolders: string; uploadKey: string; createdAt: number }
 
 const MEMBER_COLS = "id, name, motto, color, hasAvatar, createdAt, password, isAdmin, avatarUpdatedAt";
@@ -392,35 +393,81 @@ export class Repo {
   }
 
   // ================================================================ Forum
+  private mediaDto = (m: MediaRow) => ({ id: m.id, url: `/api/media/${m.id}`, contentType: m.contentType, name: m.name, size: m.size });
   async forum() {
-    const [members, comments, posts] = await Promise.all([
+    const [members, comments, posts, media] = await Promise.all([
       this.db.all<MemberRow>("SELECT id, name, color, hasAvatar FROM members"),
       this.db.all<CommentRow>("SELECT id, postId AS parentId, authorId, body AS text, createdAt FROM forum_comments ORDER BY createdAt ASC"),
       this.db.all<ForumPostRow>("SELECT * FROM forum_posts ORDER BY pinned DESC, createdAt DESC"),
+      this.db.all<MediaRow>("SELECT id, contentType, size, name, postId, commentId FROM media WHERE postId IS NOT NULL OR commentId IS NOT NULL ORDER BY id"),
     ]);
     const mBy = byId(members), cBy = groupBy(comments, c => c.parentId);
+    const byPost = groupBy(media.filter(m => m.postId != null), m => m.postId!), byComment = groupBy(media.filter(m => m.commentId != null), m => m.commentId!);
     return posts.map(p => {
       const a = p.authorId != null ? mBy.get(p.authorId) : undefined;
       return {
         id: p.id, authorId: p.authorId, authorName: a?.name ?? "Unbekannt", authorColor: a?.color ?? "#777777", authorHasAvatar: a ? bool(a.hasAvatar) : false,
-        title: p.title, body: p.body, pinned: bool(p.pinned), comments: (cBy.get(p.id) ?? []).map(c => this.commentDto(c, c.authorId != null ? mBy.get(c.authorId) : undefined)), createdAt: p.createdAt,
+        title: p.title, body: p.body, pinned: bool(p.pinned), media: (byPost.get(p.id) ?? []).map(this.mediaDto),
+        comments: (cBy.get(p.id) ?? []).map(c => ({ ...this.commentDto(c, c.authorId != null ? mBy.get(c.authorId) : undefined), media: (byComment.get(c.id) ?? []).map(this.mediaDto) })),
+        createdAt: p.createdAt,
       };
     });
   }
-  async createPost(req: { title: string; body: string; pinned?: boolean }, actorId: number | null) {
+
+  // ---- Medien (Bilder/GIFs): erst hochladen, dann beim Speichern an Beitrag oder Kommentar hängen
+  async createMedia(data: ArrayBuffer, contentType: string, name: string, uploadedBy: number) {
+    // Verwaiste Uploads (nie an etwas gehängt) nach einem Tag aufräumen
+    await this.db.run("DELETE FROM media WHERE postId IS NULL AND commentId IS NULL AND createdAt < ?", now() - 86_400_000);
+    const id = await this.db.insert("INSERT INTO media (contentType, data, size, name, uploadedBy, createdAt) VALUES (?, ?, ?, ?, ?, ?)", contentType, data, data.byteLength, name.slice(0, 120), uploadedBy, now());
+    return { id, url: `/api/media/${id}`, contentType, name, size: data.byteLength };
+  }
+  async media(id: number) {
+    const r = await this.db.first<{ data: ArrayBuffer | number[]; contentType: string }>("SELECT data, contentType FROM media WHERE id = ?", id);
+    return r ? { data: toBytes(r.data), contentType: r.contentType } : null;
+  }
+  /** Hängt hochgeladene Medien an einen Beitrag (oder Kommentar) und löst nicht mehr gewünschte. */
+  async attachMedia(target: { postId?: number; commentId?: number }, mediaIds: number[], uploaderId: number | null, isAdmin: boolean) {
+    const col = target.postId != null ? "postId" : "commentId";
+    const targetId = target.postId ?? target.commentId!;
+    const ids = [...new Set((mediaIds ?? []).map(Number).filter(Number.isInteger))];
+    const current = (await this.db.all<{ id: number }>(`SELECT id FROM media WHERE ${col} = ?`, targetId)).map(r => r.id);
+    const stmts: { sql: string; params?: unknown[] }[] = [];
+    for (const id of current.filter(id => !ids.includes(id))) stmts.push({ sql: "DELETE FROM media WHERE id = ?", params: [id] });
+    for (const id of ids.filter(id => !current.includes(id))) {
+      stmts.push(isAdmin
+        ? { sql: `UPDATE media SET ${col} = ? WHERE id = ? AND postId IS NULL AND commentId IS NULL`, params: [targetId, id] }
+        : { sql: `UPDATE media SET ${col} = ? WHERE id = ? AND postId IS NULL AND commentId IS NULL AND uploadedBy = ?`, params: [targetId, id, uploaderId] });
+    }
+    await this.db.batch(stmts);
+  }
+  async commentPostWithMedia(postId: number, actorId: number | null, body: string, mediaIds: number[]) {
+    if (!(await this.db.first("SELECT id FROM forum_posts WHERE id = ?", postId))) throw new NotFound("Beitrag nicht gefunden");
     const m = await this.requireMember(actorId);
-    if (!req.title?.trim() && !req.body?.trim()) throw new BadRequest("Beitrag ist leer");
+    if (!body?.trim() && !(mediaIds ?? []).length) throw new BadRequest("Kommentar ist leer");
+    const id = await this.db.insert("INSERT INTO forum_comments (postId, authorId, body, createdAt) VALUES (?, ?, ?, ?)", postId, m.id, (body ?? "").trim(), now());
+    await this.attachMedia({ commentId: id }, mediaIds ?? [], m.id, false);
+    await this.grantXp(m.id, XP.FORUM_COMMENT, id);
+    return id;
+  }
+  async createPost(req: { title: string; body: string; pinned?: boolean; mediaIds?: number[] }, actorId: number | null) {
+    const m = await this.requireMember(actorId);
+    if (!req.title?.trim() && !req.body?.trim() && !(req.mediaIds ?? []).length) throw new BadRequest("Beitrag ist leer");
     const id = await this.db.insert("INSERT INTO forum_posts (authorId, title, body, pinned, createdAt) VALUES (?, ?, ?, ?, ?)", m.id, (req.title ?? "").trim(), (req.body ?? "").trim(), req.pinned ? 1 : 0, now());
+    await this.attachMedia({ postId: id }, req.mediaIds ?? [], m.id, false);
     await this.grantXp(m.id, XP.FORUM_POST, id);
     return (await this.forum()).find(p => p.id === id)!;
   }
-  async updatePost(id: number, req: { title: string; body: string; pinned?: boolean }) {
+  async updatePost(id: number, req: { title: string; body: string; pinned?: boolean; mediaIds?: number[] }, actorId: number | null, isAdmin: boolean) {
     if (!(await this.db.first("SELECT id FROM forum_posts WHERE id = ?", id))) throw new NotFound("Beitrag nicht gefunden");
     await this.db.run("UPDATE forum_posts SET title = ?, body = ?, pinned = ? WHERE id = ?", (req.title ?? "").trim(), (req.body ?? "").trim(), req.pinned ? 1 : 0, id);
+    if (req.mediaIds) await this.attachMedia({ postId: id }, req.mediaIds, actorId, isAdmin);
     return (await this.forum()).find(p => p.id === id)!;
   }
   async deletePost(id: number) {
-    await this.db.batch([{ sql: "DELETE FROM forum_comments WHERE postId = ?", params: [id] }, { sql: "DELETE FROM forum_posts WHERE id = ?", params: [id] }, { sql: "DELETE FROM xp_log WHERE type = ? AND refId = ?", params: [XP.FORUM_POST, id] }]);
+    await this.db.batch([
+      { sql: "DELETE FROM media WHERE postId = ? OR commentId IN (SELECT id FROM forum_comments WHERE postId = ?)", params: [id, id] },
+      { sql: "DELETE FROM forum_comments WHERE postId = ?", params: [id] }, { sql: "DELETE FROM forum_posts WHERE id = ?", params: [id] }, { sql: "DELETE FROM xp_log WHERE type = ? AND refId = ?", params: [XP.FORUM_POST, id] },
+    ]);
   }
   async commentPost(postId: number, actorId: number | null, body: string) {
     if (!(await this.db.first("SELECT id FROM forum_posts WHERE id = ?", postId))) throw new NotFound("Beitrag nicht gefunden");
@@ -430,7 +477,7 @@ export class Repo {
     await this.grantXp(m.id, XP.FORUM_COMMENT, id);
   }
   async deleteForumComment(id: number) {
-    await this.db.batch([{ sql: "DELETE FROM forum_comments WHERE id = ?", params: [id] }, { sql: "DELETE FROM xp_log WHERE type = ? AND refId = ?", params: [XP.FORUM_COMMENT, id] }]);
+    await this.db.batch([{ sql: "DELETE FROM media WHERE commentId = ?", params: [id] }, { sql: "DELETE FROM forum_comments WHERE id = ?", params: [id] }, { sql: "DELETE FROM xp_log WHERE type = ? AND refId = ?", params: [XP.FORUM_COMMENT, id] }]);
   }
 
   // ================================================================ Kosten
@@ -685,7 +732,7 @@ export class Repo {
       st.push(
         { sql: "DELETE FROM xp_log WHERE type IN ('suggestion', 'suggestion_adopted', 'suggestion_comment', 'forum_post', 'forum_comment')" },
         { sql: "DELETE FROM suggestion_votes" }, { sql: "DELETE FROM suggestion_comments" }, { sql: "DELETE FROM suggestions" },
-        { sql: "DELETE FROM forum_comments" }, { sql: "DELETE FROM forum_posts" },
+        { sql: "DELETE FROM forum_comments" }, { sql: "DELETE FROM forum_posts" }, { sql: "DELETE FROM media WHERE postId IS NOT NULL OR commentId IS NOT NULL" },
       );
     }
     if (o.xp) { deleted += await count("SELECT COUNT(*) AS n FROM xp_log"); st.push({ sql: "DELETE FROM xp_log" }); }

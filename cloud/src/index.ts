@@ -173,9 +173,25 @@ post("/api/suggestions/{id}/adopt", async c => { const g = await c.repo.adoptSug
 // ---------------- Forum
 get("/api/forum", async c => c.repo.forum());
 post("/api/forum", async c => { const p = await c.repo.createPost(await c.body(), actor(c)); await c.broadcast("forum"); return p; });
-put("/api/forum/{id}", async c => { await requireAuthorOrAdmin(c, "forum_posts", id(c), "Beitrag"); const p = await c.repo.updatePost(id(c), await c.body()); await c.broadcast("forum"); return p; });
+put("/api/forum/{id}", async c => { await requireAuthorOrAdmin(c, "forum_posts", id(c), "Beitrag"); const p = await c.repo.updatePost(id(c), await c.body(), actor(c), isAdmin(c)); await c.broadcast("forum"); return p; });
 del("/api/forum/{id}", async c => { requireAdmin(c); await c.repo.deletePost(id(c)); await c.broadcast("forum"); return ok(); });
-post("/api/forum/{id}/comments", async c => { await c.repo.commentPost(id(c), actor(c), (await c.body<{ text: string }>()).text); await c.broadcast("forum"); return ok(); });
+post("/api/forum/{id}/comments", async c => { const r = await c.body<{ text: string; mediaIds?: number[] }>(); await c.repo.commentPostWithMedia(id(c), actor(c), r.text, r.mediaIds ?? []); await c.broadcast("forum"); return ok(); });
+
+// ---------------- Medien (Bilder/GIFs im Forum)
+post("/api/media", async c => {
+  const s = session(c);
+  const ct = (c.req.headers.get("Content-Type") ?? "").split(";")[0].trim();
+  if (!/^image\/(jpeg|png|gif|webp)$/.test(ct)) throw new BadRequest("Nur JPG, PNG, GIF oder WebP");
+  const data = await c.req.arrayBuffer();
+  if (!data.byteLength) throw new BadRequest("Datei ist leer");
+  if (data.byteLength > 1_500_000) throw new BadRequest("Datei ist zu groß (max. 1,5 MB)");
+  return c.repo.createMedia(data, ct, decodeURIComponent(c.req.headers.get("X-File-Name") ?? ""), s.member.id);
+});
+get("/api/media/{id}", async c => {
+  const m = await c.repo.media(id(c));
+  if (!m) throw new NotFound("Bild nicht gefunden");
+  return new Response(m.data as unknown as BodyInit, { headers: { "Content-Type": m.contentType, "Cache-Control": "public, max-age=31536000, immutable" } });
+});
 del("/api/forum/comments/{id}", async c => { requireAdmin(c); await c.repo.deleteForumComment(id(c)); await c.broadcast("forum"); return ok(); });
 
 // ---------------- LAN-Party-Ausgaben
@@ -420,7 +436,7 @@ export default {
     const repo = new Repo(db);
     const token = req.headers.get("Authorization")?.replace(/^Bearer\s*/i, "").trim() ?? null;
     const sess = await resolveSession(db, token);
-    const isAvatarGet = req.method === "GET" && (/^\/api\/members\/\d+\/avatar$/.test(url.pathname) || /^\/api\/sounds(\/\w+)?$/.test(url.pathname));
+    const isAvatarGet = req.method === "GET" && (/^\/api\/members\/\d+\/avatar$/.test(url.pathname) || /^\/api\/sounds(\/\w+)?$/.test(url.pathname) || /^\/api\/media\/\d+$/.test(url.pathname));
     const isFolderUpload = req.method === "POST" && /^\/api\/shares\/\d+\/folders$/.test(url.pathname);
     if (!sess && !PUBLIC.has(url.pathname) && !isAvatarGet && !isFolderUpload) return json({ error: "Bitte anmelden" }, 401);
 

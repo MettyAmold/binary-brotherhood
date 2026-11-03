@@ -235,6 +235,40 @@ export async function copyText(text) {
   return ok;
 }
 
+/** Foto fürs Forum verkleinern (längste Seite max px, Seitenverhältnis bleibt); GIFs unverändert lassen. */
+export function shrinkImage(file, max = 1600, quality = 0.85) {
+  if (file.type === "image/gif") return Promise.resolve(file);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      if (scale === 1 && file.size < 900_000) { URL.revokeObjectURL(url); resolve(file); return; }
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const keepPng = file.type === "image/png" && file.size < 600_000;
+      c.toBlob((b) => b ? resolve(b) : reject(new Error("Bild konnte nicht verarbeitet werden")), keepPng ? "image/png" : "image/jpeg", quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Bild konnte nicht geladen werden")); };
+    img.src = url;
+  });
+}
+
+/** Bild in Großansicht. */
+export function lightbox(url) {
+  const back = h("div", { class: "lightbox", onClick: () => back.remove() }, h("img", { src: url, alt: "" }), h("button", { class: "btn ghost icon lb-close", "aria-label": "Schließen" }, "✕"));
+  document.body.append(back);
+}
+
+/** Bilder eines Beitrags oder Kommentars als Kacheln, Tipp öffnet die Großansicht. */
+export function mediaGrid(media) {
+  if (!media || !media.length) return null;
+  return h("div", { class: `media-grid n${Math.min(media.length, 4)}` }, media.map(m =>
+    h("img", { src: m.url, alt: m.name || "", loading: "lazy", onClick: () => lightbox(m.url) })));
+}
+
 export function confetti(n = 120) {
   const box = h("div", { class: "confetti" });
   const colors = ["#c9a24d", "#e8d9a8", "#f1e7cf", "#8f6f2a", "#4fa3d9", "#6bbf59", "#e05c8a"];
