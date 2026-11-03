@@ -39,7 +39,7 @@ function renderShell() {
     h("div", { class: "brand" }, h("div", { class: "title" }, "BINARY BROTHERHOOD"), h("div", { class: "sub" }, "Ctrl Alt Delirium · Est. 2017")),
     h("div", { class: "spacer" }),
     store.event ? h("a", { class: "event-chip", href: "#/organisation" }, store.event.name) : null,
-    h("div", { class: `conn ${store.connected ? "on" : ""}`, id: "conn", title: "Live-Verbindung" }),
+    onlineChip(),
     meChip(),
   );
   const nav = h("nav", { class: "nav" }, routes.map(r =>
@@ -48,6 +48,24 @@ function renderShell() {
   const main = h("main", { class: "main", id: "main" });
   mount(root, h("div", { class: "app" }, header, nav, main));
   return main;
+}
+
+/** „● 3 online“ im Header; Klick zeigt, wer gerade verbunden ist. */
+function onlineChip() {
+  const n = store.online.length;
+  return h("div", { class: `online-chip ${store.connected ? "on" : ""}`, id: "online-chip", title: store.connected ? (n ? store.online.map(o => o.name).join(", ") : "Niemand online") : "Keine Live-Verbindung", onClick: onlineDialog },
+    h("span", { class: "dot" }), h("span", { class: "n" }, store.connected ? `${n} online` : "offline"));
+}
+
+function onlineDialog() {
+  const list = store.online.map(o => store.member(o.id) || { id: o.id, name: o.name });
+  modal({
+    title: "Gerade online",
+    body: list.length
+      ? h("div", { class: "pick-list" }, list.map(m => h("div", { class: "it" }, avatar(m, "sm"), h("span", { class: "grow" }, m.name), h("span", { class: "chip green" }, "● online"))))
+      : h("p", { class: "muted" }, store.connected ? "Außer dir ist niemand verbunden." : "Keine Live-Verbindung zum Server."),
+    buttons: [{ label: "Schließen" }],
+  });
 }
 
 function meChip() {
@@ -340,7 +358,9 @@ window.addEventListener("bb:unauthorized", () => {
 });
 
 window.addEventListener("hashchange", renderRoute);
-on("connection", (ok) => { const c = document.getElementById("conn"); if (c) c.classList.toggle("on", !!ok); });
+const refreshOnline = () => { const c = document.getElementById("online-chip"); if (c) c.replaceWith(onlineChip()); };
+on("connection", refreshOnline);
+on("presence", refreshOnline);
 on("members", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("me", () => { const chip = document.getElementById("me-chip"); if (chip) chip.replaceWith(meChip()); });
 on("events", () => { const chip = document.querySelector(".event-chip"); if (chip && store.event) chip.textContent = store.event.name; });

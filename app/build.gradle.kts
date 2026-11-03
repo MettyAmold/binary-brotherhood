@@ -16,6 +16,8 @@ android {
         targetSdk = 35
         versionCode = (System.getenv("BBL_VERSION_CODE") ?: "2").toInt()
         versionName = System.getenv("BBL_VERSION_NAME") ?: "1.0"
+        // Adresse der Cloud-Variante; die App ist ein Client dafür
+        buildConfigField("String", "CLOUD_URL", "\"${System.getenv("BBL_CLOUD_URL") ?: "https://binary-brotherhood.binary-brotherhood-cloud.workers.dev"}\"")
         vectorDrawables { useSupportLibrary = true }
     }
 

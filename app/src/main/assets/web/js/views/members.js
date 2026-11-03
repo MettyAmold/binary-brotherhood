@@ -17,7 +17,7 @@ export async function renderMembers(main, params) {
       h("div", { class: "page-head" }, h("h2", {}, "Bruderschaft"), h("span", { class: "chip" }, `${list.length} Mitglieder`)),
       list.length ? h("div", { class: "grid tight" }, list.map((m, i) => h("div", { class: `card member-card ${store.me && store.me.id === m.id ? "me" : ""}`, onClick: () => { location.hash = `#/members/${m.id}`; } },
         h("div", { style: { position: "relative" } }, avatar(m, "lg"), h("span", { class: "level-badge", style: { position: "absolute", right: "-6px", bottom: "-4px" } }, m.level)),
-        h("div", { style: { fontWeight: 700, marginTop: "4px" } }, m.name),
+        h("div", { style: { fontWeight: 700, marginTop: "4px" } }, store.isOnline(m.id) ? h("span", { class: "online-dot", title: "online" }) : null, m.name),
         h("div", { class: "rank" }, m.rank),
         h("div", { class: "small muted" }, `${m.xp} XP${i === 0 && m.xp > 0 ? " · 👑" : ""}`),
         h("div", { class: "xp-bar" }, h("i", { style: { width: `${Math.round(m.progress * 100)}%` } })),
@@ -55,7 +55,7 @@ export async function renderMembers(main, params) {
             canEdit ? h("span", { class: "chip gold", style: { position: "absolute", bottom: "-4px", left: "50%", transform: "translateX(-50%)", cursor: "pointer" } }, "📷") : null),
           file,
           h("div", { class: "grow" },
-            h("div", { class: "row wrap" }, h("h3", { style: { fontSize: "22px" } }, m.name), h("span", { class: "level-badge lg" }, m.level)),
+            h("div", { class: "row wrap" }, h("h3", { style: { fontSize: "22px" } }, m.name), h("span", { class: "level-badge lg" }, m.level), store.isOnline(m.id) ? h("span", { class: "chip green" }, "● online") : null),
             h("div", { class: "rank", style: { fontFamily: "var(--display)", color: "var(--gold)", letterSpacing: ".12em", textTransform: "uppercase", fontSize: "13px" } }, m.rank),
             m.motto ? h("div", { class: "muted", style: { fontStyle: "italic", marginTop: "4px" } }, `„${m.motto}“`) : null,
             h("div", { style: { marginTop: "10px" } },
@@ -104,7 +104,7 @@ export async function renderMembers(main, params) {
 
   mount(main, content);
   draw();
-  const offs = [on("members", draw), on("me", draw)];
+  const offs = [on("members", draw), on("me", draw), on("presence", draw)];
   return () => offs.forEach(f => f());
 }
 

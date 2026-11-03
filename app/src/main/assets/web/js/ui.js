@@ -114,13 +114,22 @@ export function initials(name) {
   return (name || "?").split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
+/** Bild-Adressen je Mitglied (mit Upload-Zeitstempel), vom Store gepflegt – für Autoren-Objekte ohne eigene avatarUrl. */
+const avatarUrls = new Map();
+export function setAvatarUrls(members) { avatarUrls.clear(); for (const m of members) if (m.avatarUrl) avatarUrls.set(m.id, m.avatarUrl); }
+
+/**
+ * Avatar für ein Mitglied oder ein Objekt mit Autor-Feldern (Vorschlag, Beitrag, Kommentar: authorId/authorName/…).
+ * Wichtig: bei Autor-Objekten zählt authorId, nicht die eigene id des Beitrags.
+ */
 export function avatar(member, size = "") {
   const cls = `avatar ${size}`;
   if (!member) return h("div", { class: cls, style: { background: "#333" } }, "?");
-  if (member.hasAvatar || member.authorHasAvatar) {
-    const id = member.id ?? member.authorId;
-    // avatarUrl enthält den Upload-Zeitstempel, damit der Browser nach einem neuen Bild nicht das alte aus dem Cache zeigt
-    const src = member.avatarUrl || `/api/members/${id}/avatar?v=${member.createdAt || ""}`;
+  const isAuthor = "authorId" in member;
+  const id = isAuthor ? member.authorId : member.id;
+  const has = isAuthor ? member.authorHasAvatar : member.hasAvatar;
+  if (has && id != null) {
+    const src = member.avatarUrl || avatarUrls.get(id) || `/api/members/${id}/avatar`;
     return h("div", { class: cls, style: { borderColor: member.color || member.authorColor || "" } },
       h("img", { src, alt: "", loading: "lazy" }));
   }

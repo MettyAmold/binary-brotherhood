@@ -78,6 +78,11 @@ p { margin: 0 0 .6em; }
 .brand .sub { font-family: var(--display); font-size: 10px; letter-spacing: .25em; color: var(--gold-3); text-transform: uppercase; white-space: nowrap; }
 .header .spacer { flex: 1; }
 .header .event-chip { font-size: 12px; color: var(--text-2); border: 1px solid var(--line); padding: 4px 10px; border-radius: 20px; white-space: nowrap; }
+.online-chip { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 20px; padding: 3px 9px; cursor: pointer; white-space: nowrap; }
+.online-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #e05c5c; }
+.online-chip.on { color: #9ad88c; border-color: #35612c; }
+.online-chip.on .dot { background: #6bbf59; box-shadow: 0 0 8px rgba(107, 191, 89, .6); }
+.online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6bbf59; margin-right: 6px; box-shadow: 0 0 6px rgba(107, 191, 89, .6); }
 .me-chip { display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--line); padding: 4px 10px 4px 4px; border-radius: 30px; cursor: pointer; }
 .me-chip:hover { border-color: var(--gold-3); }
 .me-chip .name { font-size: 13px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

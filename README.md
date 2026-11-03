@@ -33,12 +33,14 @@ Keine Cloud, keine Konten, keine Kosten.
 
 Level-Schwelle: `50 · (n−1) · n` XP. Ränge: Novize (1), Laienbruder (3), Bruder (5), Mönch (8), Prior (11), Abt (15), Erzabt (20), Großmeister (26), Binärer Erleuchteter (33).
 
-## Cloud-Variante (empfohlen für die Vorbereitung vor der LAN)
+## Betrieb: Cloud, die App ist der Client
 
-Derselbe Funktionsumfang läuft als Cloudflare Worker mit D1-Datenbank und ist von überall erreichbar, ohne dass
-das Host-Handy an sein muss. Einrichtung, Deploy über GitHub Actions und Datenumzug vom Handy stehen in
-[cloud/README.md](cloud/README.md). Unterschiede: Admin-Rolle statt Host, Registrierung nur mit Einladungscode,
-Spielordner meldet der PC per Skript, Internet nötig.
+Seit Version 2.1 läuft der Server als Cloudflare Worker mit D1-Datenbank (Verzeichnis `cloud/`), erreichbar unter
+https://binary-brotherhood.binary-brotherhood-cloud.workers.dev. Die Android-App lädt diese Adresse in einem WebView
+und bringt den Update-Knopf mit; der frühere LAN-Server am Handy wird nicht mehr gestartet (Code liegt noch unter
+`app/src/main/java/.../server`). Einrichtung, Deploy über GitHub Actions und Datenumzug stehen in
+[cloud/README.md](cloud/README.md). Admin-Rolle statt Host, Registrierung nur mit Einladungscode, Spielordner meldet
+der PC per Skript, Online-Anzeige im Header, Internet nötig.
 
 ## Bauen und installieren
 

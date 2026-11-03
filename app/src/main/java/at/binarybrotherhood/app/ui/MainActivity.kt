@@ -69,6 +69,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import at.binarybrotherhood.app.BuildConfig
 import at.binarybrotherhood.app.R
 import at.binarybrotherhood.app.server.LanServer
 import at.binarybrotherhood.app.server.ServerService
@@ -123,13 +124,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            startAndBind()
-        }
+        // Die App ist ein Client der Cloud-Variante; der LAN-Server (ServerService) wird nicht mehr gestartet.
     }
 
     override fun onResume() {
@@ -174,8 +169,9 @@ class MainActivity : ComponentActivity() {
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
-                // Externe Links (z. B. Steam) im System-Browser öffnen
-                return if (url.host == "127.0.0.1" || url.host == "localhost") false else {
+                // Externe Links (z. B. Steam) im System-Browser öffnen, die Cloud-App selbst bleibt im WebView
+                val cloudHost = Uri.parse(BuildConfig.CLOUD_URL).host
+                return if (url.host == cloudHost || url.host == "127.0.0.1" || url.host == "localhost") false else {
                     runCatching { startActivity(Intent(Intent.ACTION_VIEW, url)) }
                     true
                 }
@@ -190,7 +186,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         webView = this
-        loadUrl("http://127.0.0.1:${LanServer.DEFAULT_PORT}/")
+        loadUrl(BuildConfig.CLOUD_URL)
     }
 }
 
@@ -233,14 +229,10 @@ private fun HostScreen(
                 },
             )
             Box(modifier = Modifier.fillMaxSize()) {
-                if (running) {
-                    AndroidView(
-                        factory = { ctx -> webViewFactory(ctx).also { webViewRef = it } },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    StartingPanel(service = service, onToggleServer = onToggleServer)
-                }
+                AndroidView(
+                    factory = { ctx -> webViewFactory(ctx).also { webViewRef = it } },
+                    modifier = Modifier.fillMaxSize(),
+                )
                 if (showHost && service != null) {
                     HostPanel(service = service, running = running, clients = clients, onToggleServer = { onToggleServer(service) }, onShare = onShare, onClose = { showHost = false })
                 }
@@ -262,11 +254,6 @@ private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onH
         Spacer(Modifier.width(10.dp))
         Text("BINARY BROTHERHOOD", style = MaterialTheme.typography.titleMedium, color = Gold)
         Spacer(Modifier.weight(1f))
-        Box(
-            modifier = Modifier.clip(RoundedCornerShape(50)).background(if (running) Color(0xFF1E3A2A) else Color(0xFF3A1E1E)).padding(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text(if (running) "● $clients online" else "○ gestoppt", fontSize = 12.sp, color = if (running) Color(0xFF6BBF59) else Color(0xFFE05C5C))
-        }
         IconButton(onClick = onReload) { Icon(Icons.Default.Refresh, contentDescription = "Neu laden", tint = Muted) }
         IconButton(onClick = onUpdate) {
             Box {
@@ -283,7 +270,6 @@ private fun TopBar(running: Boolean, clients: Int, updateAvailable: Boolean, onH
                 }
             }
         }
-        IconButton(onClick = onHost) { Icon(Icons.Default.Share, contentDescription = "Host-Info", tint = Gold) }
     }
 }
 

@@ -275,8 +275,12 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
+      // Token aus der URL → Mitglied an das Hub-Objekt melden (für die Online-Anzeige)
+      const sess = await resolveSession(new Db(env.DB), url.searchParams.get("token"));
+      const headers = new Headers(req.headers);
+      if (sess) { headers.set("X-Member-Id", String(sess.member.id)); headers.set("X-Member-Name", encodeURIComponent(sess.member.name)); }
       const stub = env.HUB.get(env.HUB.idFromName("hub"));
-      return stub.fetch(req);
+      return stub.fetch(new Request(req, { headers }));
     }
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
 

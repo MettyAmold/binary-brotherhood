@@ -1,6 +1,7 @@
 // Globaler Zustand: aktuelles Mitglied, Mitgliederliste, LAN-Ausgabe, Live-Verbindung.
 import { api, getToken, setToken } from "./api.js";
 import { setSoundUrls } from "./notify.js";
+import { setAvatarUrls } from "./ui.js";
 
 const listeners = new Map(); // topic -> Set<fn>
 
@@ -14,7 +15,10 @@ export const store = {
   event: null,
   events: [],
   connected: false,
+  /** Mitglieder mit offener Live-Verbindung: [{ id, name }] */
+  online: [],
   appName: "BINARY BROTHERHOOD",
+  isOnline(id) { return this.online.some(o => o.id === Number(id)); },
 
   member(id) { return this.members.find(m => m.id === Number(id)) || null; },
 
@@ -55,7 +59,7 @@ export const store = {
   async bootstrap() {
     const b = await api.get("/api/bootstrap");
     this.refreshSounds();
-    this.members = b.members;
+    this.members = b.members; setAvatarUrls(b.members);
     this.event = b.event;
     this.events = b.events;
     this.appName = b.appName;
@@ -64,7 +68,7 @@ export const store = {
   },
 
   async refreshMembers() {
-    this.members = await api.get("/api/members");
+    this.members = await api.get("/api/members"); setAvatarUrls(this.members);
     if (this.me) this.me = this.member(this.me.id) || this.me;
     emit("members");
   },
@@ -110,7 +114,8 @@ function startPolling() {
 
 export function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  try { ws = new WebSocket(`${proto}://${location.host}/ws`); } catch { scheduleReconnect(); return; }
+  const tok = getToken();
+  try { ws = new WebSocket(`${proto}://${location.host}/ws${tok ? `?token=${encodeURIComponent(tok)}` : ""}`); } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     const wasOffline = !store.connected;
     store.connected = true; retry = 1000; failures = 0; emit("connection", true);
@@ -124,6 +129,7 @@ export function connect() {
   };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === "presence") { store.online = msg.members || []; emit("presence", store.online); return; }
     if (msg.type === "change") {
       if (msg.topic === "members") store.refreshMembers().catch(() => {});
       else if (msg.topic === "events") store.refreshEvents().catch(() => {});
@@ -131,7 +137,7 @@ export function connect() {
       emit(msg.topic, msg.payload);
     }
   };
-  ws.onclose = () => { store.connected = false; emit("connection", false); clearInterval(pingTimer); scheduleReconnect(); };
+  ws.onclose = () => { store.connected = false; store.online = []; emit("connection", false); emit("presence", []); clearInterval(pingTimer); scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
 }
 
