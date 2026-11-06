@@ -69,7 +69,7 @@ async function checkAttendance() {
   const day = store.currentDay();
   if (!day) return; // LAN läuft gerade nicht
   const d = new Date(); const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; // lokales Datum
-  try { if (localStorage.getItem(snoozeKey()) === today) return; } catch { /* privat */ }
+  try { const s = localStorage.getItem(snoozeKey()); if (s === today || s === "never") return; } catch { /* privat */ }
   let costs; try { costs = await api.get("/api/costs", { silent: true }); } catch { return; }
   if ((costs.attendance[store.me.id] || []).length) return; // schon eingetragen
   attendancePromptOpen = true;
