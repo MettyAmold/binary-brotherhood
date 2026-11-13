@@ -33,18 +33,18 @@ export function levelForXp(xp: number): LevelInfo {
 }
 
 // ---------- Kosten ----------
-export interface ExpenseInput { id: number; amountCents: number; paidById: number; day: number | null; explicitParticipants: number[] }
+export interface ExpenseInput { id: number; amountCents: number; paidById: number; day: number | null; explicitParticipants: { memberId: number; weight: number }[] }
 export interface PaymentInput { fromId: number; toId: number; amountCents: number }
 export interface ShareResult { memberId: number; cents: number }
 export interface MemberBalance { memberId: number; paidCents: number; owedCents: number; settledOutCents: number; settledInCents: number; netCents: number }
 export interface Transfer { fromId: number; toId: number; cents: number }
 export interface CostSummary { totalCents: number; balances: MemberBalance[]; transfers: Transfer[]; shares: Map<number, ShareResult[]> }
 
-/** Teilt einen Einkauf fair auf: explizite Teilnehmer gleich, Tages-Einkauf unter Anwesenden des Tags, ganze LAN nach Anwesenheitstagen gewichtet. */
+/** Teilt einen Einkauf fair auf: explizite Teilnehmer nach ihrem Gewicht (z. B. Tage), Tages-Einkauf unter Anwesenden des Tags, ganze LAN nach Anwesenheitstagen gewichtet. */
 export function splitExpense(e: ExpenseInput, attendance: Map<number, Set<number>>, allMemberIds: number[]): ShareResult[] {
   let weights = new Map<number, number>();
   if (e.explicitParticipants.length) {
-    e.explicitParticipants.forEach(id => weights.set(id, 1));
+    e.explicitParticipants.filter(p => p.weight > 0).forEach(p => weights.set(p.memberId, p.weight));
   } else if (e.day != null) {
     const present = [...attendance.entries()].filter(([, days]) => days.has(e.day!)).map(([id]) => id);
     const any = [...attendance.entries()].filter(([, days]) => days.size > 0).map(([id]) => id);

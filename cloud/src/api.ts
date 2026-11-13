@@ -346,6 +346,7 @@ get("/api/costs", async c => c.repo.costs(eventId(c)));
 put("/api/costs/attendance", async c => { await c.repo.setAttendance(eventId(c), await c.body()); await c.broadcast("costs"); await c.broadcast("members"); return ok(); });
 post("/api/costs/expenses", async c => { const e = await c.repo.createExpense(eventId(c), await c.body()); await c.broadcast("costs"); return e; });
 put("/api/costs/expenses/{id}", async c => { const e = await c.repo.updateExpense(id(c), await c.body()); await c.broadcast("costs"); return e; });
+post("/api/costs/recalculate", async c => { const r = await c.repo.recalculateExpenses(eventId(c), await c.body()); await c.broadcast("costs"); return r; });
 del("/api/costs/expenses/{id}", async c => { await c.repo.deleteExpense(id(c)); await c.broadcast("costs"); return ok(); });
 post("/api/costs/payments", async c => { const p = await c.repo.createPayment(eventId(c), await c.body()); await c.broadcast("costs"); return p; });
 del("/api/costs/payments/{id}", async c => { await c.repo.deletePayment(id(c)); await c.broadcast("costs"); return ok(); });

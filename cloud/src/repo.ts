@@ -18,6 +18,7 @@ interface SessionRow { id: number; gameId: number; eventId: number; startedAt: n
 interface SuggestionRow { id: number; scope: string; title: string; description: string; steamUrl: string; steamAppId: number | null; imageUrl: string; authorId: number | null; adoptedGameId: number | null; createdAt: number }
 interface ForumPostRow { id: number; authorId: number | null; title: string; body: string; pinned: number; createdAt: number }
 interface CommentRow { id: number; authorId: number | null; text: string; createdAt: number; parentId: number }
+interface ShareWeight { memberId: number; weight: number }
 interface ExpenseRow { id: number; eventId: number; title: string; amountCents: number; paidById: number; day: number | null; note: string; createdAt: number }
 interface EquipmentRow { id: number; eventId: number; name: string; category: string; quantity: number; note: string; bringerId: number | null; done: number; createdAt: number }
 interface PollRow { id: number; eventId: number; open: number; winnerGameId: number | null; createdAt: number; closedAt: number | null }
@@ -474,22 +475,22 @@ export class Repo {
     const [members, attendanceRows, shareRows, expenses, payments] = await Promise.all([
       this.db.all<MemberRow>("SELECT id, name FROM members"),
       this.db.all<{ memberId: number; day: number }>("SELECT memberId, day FROM attendance WHERE eventId = ?", event.id),
-      this.db.all<{ expenseId: number; memberId: number }>("SELECT * FROM expense_shares"),
+      this.db.all<{ expenseId: number; memberId: number; weight: number }>("SELECT es.expenseId, es.memberId, es.weight FROM expense_shares es JOIN expenses e ON e.id = es.expenseId WHERE e.eventId = ?", event.id),
       this.db.all<ExpenseRow>("SELECT * FROM expenses WHERE eventId = ? ORDER BY createdAt DESC", event.id),
       this.db.all<{ id: number; fromId: number; toId: number; amountCents: number; createdAt: number }>("SELECT * FROM payments WHERE eventId = ? ORDER BY createdAt DESC", event.id),
     ]);
     const memberIds = members.map(m => m.id), mBy = byId(members);
     const attendance = new Map<number, Set<number>>();
-    attendanceRows.forEach(a => (attendance.get(a.memberId) ?? attendance.set(a.memberId, new Set()).get(a.memberId)!).add(a.day));
+    attendanceRows.filter(a => a.day >= 1 && a.day <= event.days).forEach(a => (attendance.get(a.memberId) ?? attendance.set(a.memberId, new Set()).get(a.memberId)!).add(a.day));
     const sBy = groupBy(shareRows, s => s.expenseId);
-    const inputs: ExpenseInput[] = expenses.map(e => ({ id: e.id, amountCents: e.amountCents, paidById: e.paidById, day: e.day, explicitParticipants: (sBy.get(e.id) ?? []).map(s => s.memberId) }));
+    const inputs: ExpenseInput[] = expenses.map(e => ({ id: e.id, amountCents: e.amountCents, paidById: e.paidById, day: e.day, explicitParticipants: (sBy.get(e.id) ?? []).map(s => ({ memberId: s.memberId, weight: Number(s.weight) })) }));
     const summary = summarizeCosts(memberIds, inputs, payments, attendance);
     return {
       eventId: event.id, days: event.days,
       attendance: Object.fromEntries([...attendance.entries()].map(([id, days]) => [id, [...days].sort((a, b) => a - b)])),
       expenses: expenses.map(e => ({
         id: e.id, eventId: e.eventId, title: e.title, amountCents: e.amountCents, paidById: e.paidById, paidByName: mBy.get(e.paidById)?.name ?? "Unbekannt", day: e.day, note: e.note,
-        participantIds: (sBy.get(e.id) ?? []).map(s => s.memberId), shares: (summary.shares.get(e.id) ?? []).map(s => ({ memberId: s.memberId, cents: s.cents })), createdAt: e.createdAt,
+        participantIds: (sBy.get(e.id) ?? []).map(s => s.memberId), participants: (sBy.get(e.id) ?? []).map(s => ({ memberId: s.memberId, weight: Number(s.weight) })), shares: (summary.shares.get(e.id) ?? []).map(s => ({ memberId: s.memberId, cents: s.cents })), createdAt: e.createdAt,
       })),
       payments: payments.map(p => ({ id: p.id, fromId: p.fromId, toId: p.toId, amountCents: p.amountCents, createdAt: p.createdAt })),
       balances: summary.balances.filter(b => mBy.has(b.memberId)).map(b => ({ memberId: b.memberId, paidCents: b.paidCents, owedCents: b.owedCents, netCents: b.netCents })),
@@ -514,23 +515,68 @@ export class Repo {
     if (!(await this.db.first("SELECT id FROM members WHERE id = ?", req.paidById))) throw new BadRequest("Zahler nicht gefunden");
     if (req.day != null && (req.day < 1 || req.day > event.days)) throw new BadRequest("Ungültiger Tag");
   }
-  async createExpense(eventId: number | null, req: { title: string; amountCents: number; paidById: number; day?: number | null; note?: string; participantIds?: number[] }) {
+  /** Teilnehmer mit Gewicht (Tage) – alte Clients schicken nur participantIds, dann Gewicht 1. */
+  private normalizeParticipants(req: { participantIds?: number[]; participants?: ShareWeight[] }): ShareWeight[] {
+    const list = req.participants ?? (req.participantIds ?? []).map(memberId => ({ memberId, weight: 1 }));
+    const byMember = new Map<number, number>();
+    for (const p of list) {
+      const w = Number(p.weight);
+      if (!Number.isInteger(p.memberId)) throw new BadRequest("Ungültiger Teilnehmer");
+      if (!Number.isFinite(w) || w < 0 || w > 1000) throw new BadRequest("Ungültige Anzahl Tage");
+      byMember.set(p.memberId, Math.round(w * 100) / 100);
+    }
+    const result = [...byMember].map(([memberId, weight]) => ({ memberId, weight }));
+    if (result.length && !result.some(p => p.weight > 0)) throw new BadRequest("Mindestens ein Teilnehmer braucht mehr als 0 Tage");
+    return result.filter(p => p.weight > 0);
+  }
+  /** Ohne Teilnehmerliste (alte Clients): Aufteilung aus der aktuellen Anwesenheit festschreiben – wie splitExpense sie berechnen würde. */
+  private async participantsFor(req: { day?: number | null; participantIds?: number[]; participants?: ShareWeight[] }, event: EventRow): Promise<ShareWeight[]> {
+    const given = this.normalizeParticipants(req);
+    if (given.length) return given;
+    const rows = await this.db.all<{ memberId: number; day: number }>("SELECT a.memberId, a.day FROM attendance a JOIN members m ON m.id = a.memberId WHERE a.eventId = ? AND a.day BETWEEN 1 AND ?", event.id, event.days);
+    const days = groupBy(rows, r => r.memberId);
+    if (req.day == null) return [...days].map(([memberId, d]) => ({ memberId, weight: d.length }));
+    const present = [...days].filter(([, d]) => d.some(x => x.day === req.day)).map(([id]) => id);
+    return (present.length ? present : [...days.keys()]).map(memberId => ({ memberId, weight: 1 }));
+  }
+  private shareStmts(expenseId: number, participants: ShareWeight[]) {
+    return participants.map(p => ({ sql: "INSERT OR REPLACE INTO expense_shares (expenseId, memberId, weight) VALUES (?, ?, ?)", params: [expenseId, p.memberId, p.weight] as unknown[] }));
+  }
+  /** Neu berechnen: übernimmt die im Dialog geprüften Tage je Einkauf (Vorschlag aus der Anwesenheit, ggf. von Hand angepasst). */
+  async recalculateExpenses(eventId: number | null, req: { expenses?: { id: number; participants: ShareWeight[] }[] }) {
+    const event = await this.eventOrCurrent(eventId);
+    const list = req.expenses ?? [];
+    if (!list.length) throw new BadRequest("Nichts zu übernehmen");
+    const stmts: { sql: string; params: unknown[] }[] = [];
+    for (const x of list) {
+      const e = await this.db.first<ExpenseRow>("SELECT * FROM expenses WHERE id = ? AND eventId = ?", x.id, event.id);
+      if (!e) throw new NotFound("Einkauf nicht gefunden");
+      const participants = this.normalizeParticipants({ participants: x.participants ?? [] });
+      if (!participants.length) throw new BadRequest(`„${e.title}“: mindestens ein Teilnehmer nötig`);
+      stmts.push({ sql: "DELETE FROM expense_shares WHERE expenseId = ?", params: [x.id] }, ...this.shareStmts(x.id, participants));
+    }
+    await this.db.batch(stmts);
+    return { updated: list.length };
+  }
+  async createExpense(eventId: number | null, req: { title: string; amountCents: number; paidById: number; day?: number | null; note?: string; participantIds?: number[]; participants?: ShareWeight[] }) {
     const event = await this.eventOrCurrent(eventId);
     await this.validateExpense(req, event);
+    const participants = await this.participantsFor(req, event);
     const id = await this.db.insert("INSERT INTO expenses (eventId, title, amountCents, paidById, day, note, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)", event.id, req.title.trim(), Math.round(req.amountCents), req.paidById, req.day ?? null, (req.note ?? "").trim(), now());
-    await this.db.batch([...new Set(req.participantIds ?? [])].map(m => ({ sql: "INSERT OR IGNORE INTO expense_shares (expenseId, memberId) VALUES (?, ?)", params: [id, m] })));
+    await this.db.batch(this.shareStmts(id, participants));
     await this.grantXp(req.paidById, XP.EXPENSE_PAID, id);
     return (await this.costs(event.id)).expenses.find(e => e.id === id)!;
   }
-  async updateExpense(id: number, req: { title: string; amountCents: number; paidById: number; day?: number | null; note?: string; participantIds?: number[] }) {
+  async updateExpense(id: number, req: { title: string; amountCents: number; paidById: number; day?: number | null; note?: string; participantIds?: number[]; participants?: ShareWeight[] }) {
     const e = await this.db.first<ExpenseRow>("SELECT * FROM expenses WHERE id = ?", id);
     if (!e) throw new NotFound("Einkauf nicht gefunden");
     const event = await this.eventOrCurrent(e.eventId);
     await this.validateExpense(req, event);
+    const participants = await this.participantsFor(req, event);
     await this.db.batch([
       { sql: "UPDATE expenses SET title = ?, amountCents = ?, paidById = ?, day = ?, note = ? WHERE id = ?", params: [req.title.trim(), Math.round(req.amountCents), req.paidById, req.day ?? null, (req.note ?? "").trim(), id] },
       { sql: "DELETE FROM expense_shares WHERE expenseId = ?", params: [id] },
-      ...[...new Set(req.participantIds ?? [])].map(m => ({ sql: "INSERT OR IGNORE INTO expense_shares (expenseId, memberId) VALUES (?, ?)", params: [id, m] })),
+      ...this.shareStmts(id, participants),
       { sql: "DELETE FROM xp_log WHERE type = ? AND refId = ?", params: [XP.EXPENSE_PAID, id] },
     ]);
     await this.grantXp(req.paidById, XP.EXPENSE_PAID, id);

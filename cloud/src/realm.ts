@@ -13,9 +13,10 @@ import s0003 from "../realm-schema/0003_media.sql";
 import s0004 from "../realm-schema/0004_tournaments.sql";
 import s0005 from "../realm-schema/0005_accounts.sql";
 import s0006 from "../realm-schema/0006_drop_logins.sql";
+import s0007 from "../realm-schema/0007_share_weights.sql";
 
 /** Schema-Stände je Realm; neue Änderungen hinten anhängen, nie bestehende ändern. */
-const SCHEMA = [s0001, s0002, s0003, s0004, s0005, s0006];
+const SCHEMA = [s0001, s0002, s0003, s0004, s0005, s0006, s0007];
 
 interface Attachment { id: number | null; name: string }
 

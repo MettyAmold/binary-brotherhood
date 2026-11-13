@@ -8,7 +8,7 @@
     "deploy": "node scripts/changelog.mjs && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "changelog": "node scripts/changelog.mjs",
-    "test": "node test/tournament.test.ts"
+    "test": "node test/tournament.test.ts && node --experimental-transform-types test/costs.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261103.1",

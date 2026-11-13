@@ -466,3 +466,7 @@ table.tbl td.num, table.tbl th.num { text-align: right; font-variant-numeric: ta
 .scroll-x { overflow-x: auto; }
 hr.sep { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 ::selection { background: rgba(201, 162, 77, .35); }
+
+/* Neu berechnen: alt → neu je Person */
+.recalc-grid { display: grid; grid-template-columns: minmax(90px, 1fr) auto auto auto auto; gap: 6px 12px; align-items: center; min-width: 380px; }
+.recalc-grid .r { text-align: right; font-variant-numeric: tabular-nums; }
